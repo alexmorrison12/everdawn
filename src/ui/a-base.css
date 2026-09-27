@@ -1,0 +1,195 @@
+/* ============================================================================================
+   EVERDAWN UI — base: tokens, layers, text outlines, panels, buttons, bars, slots
+   All HUD layers render in a "virtual 1080p" space scaled by --s (set from JS).
+   ============================================================================================ */
+.evd {
+  --s: 1;
+  --gold: #ffd35a; --gold-hi: #fff1b8; --gold-lo: #b8861e; --bronze: #8a5a22;
+  --ink: #0b0906; --paper: #2a2016;
+  --ol: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 0 1px 2px rgba(0,0,0,.9);
+  --ol2: 2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 2px 0 #000, 0 -2px 0 #000, 2px 0 0 #000, -2px 0 0 #000, 0 3px 6px rgba(0,0,0,.8);
+  --font: 'Roboto Condensed', 'Arial Narrow', Arial, sans-serif;
+  --serif: 'Cinzel', 'Trajan Pro', Georgia, serif;
+  position: fixed; inset: 0; z-index: 20; pointer-events: none; overflow: hidden;
+  font-family: var(--font); font-size: 13px; line-height: 1.25; color: #fff;
+  -webkit-font-smoothing: antialiased; -webkit-user-select: none; user-select: none;
+  contain: strict;
+}
+.evd *, .evd *::before, .evd *::after { box-sizing: border-box; }
+.evd img { -webkit-user-drag: none; user-select: none; }
+.evd-layer {
+  position: absolute; left: 0; top: 0;
+  width: calc(100vw / var(--s)); height: calc(100vh / var(--s));
+  transform: scale(var(--s)); transform-origin: 0 0;
+  pointer-events: none;
+}
+.evd-world { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
+.evd-deathl { z-index: 1; } .evd-hud { z-index: 2; } .evd-centerl { z-index: 3; } .evd-winl { z-index: 4; }
+.evd-scrl { z-index: 5; } .evd-modall { z-index: 6; } .evd-topl { z-index: 7; }
+.evd .ptr, .evd button, .evd input, .evd select, .evd textarea, .evd a { pointer-events: auto; }
+.evd .hidden { display: none !important; }
+.evd .ol { text-shadow: var(--ol); }
+.evd .serif { font-family: var(--serif); }
+.evd .gold { color: var(--gold); }
+
+/* ---------------------------------------------------------------------------- panels */
+.evd-panel {
+  position: absolute; pointer-events: auto;
+  border: 10px solid transparent;
+  border-image: var(--evd-frame) var(--evd-frame-slice) / 10px stretch;
+  background: radial-gradient(ellipse at 50% 0%, rgba(70,52,30,.35), transparent 70%),
+              linear-gradient(180deg, rgba(26,21,16,.94), rgba(10,8,7,.96)), var(--evd-leather);
+  background-clip: padding-box;
+  box-shadow: 0 10px 30px rgba(0,0,0,.65), inset 0 0 24px rgba(0,0,0,.75);
+  color: #f2e6cc;
+}
+.evd-panel.thin { border-width: 7px; border-image: var(--evd-frame-thin) var(--evd-frame-thin-slice) / 7px stretch; }
+.evd-panel.heavy { border-width: 14px; border-image: var(--evd-frame-heavy) var(--evd-frame-heavy-slice) / 14px stretch; }
+.evd-panel.stone { background: linear-gradient(180deg, rgba(30,28,36,.94), rgba(10,10,14,.97)), var(--evd-stone, none); background-clip: padding-box; }
+.evd-parch {
+  background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(90,50,10,.45) 100%), var(--evd-parchment, none);
+  background-clip: padding-box;
+  color: #2c1a08;
+  box-shadow: 0 10px 30px rgba(0,0,0,.65), inset 0 0 40px rgba(110,62,12,.55), inset 0 0 6px rgba(60,30,0,.6);
+}
+.evd-title {
+  position: absolute; left: 50%; top: -24px; transform: translateX(-50%);
+  min-width: 180px; padding: 5px 30px 6px; text-align: center; white-space: nowrap;
+  font: 700 15px/1.1 var(--serif); letter-spacing: .06em; color: var(--gold); text-shadow: var(--ol);
+  border: 7px solid transparent; border-image: var(--evd-frame-thin) var(--evd-frame-thin-slice) / 7px stretch;
+  background: linear-gradient(180deg, #4a2012, #2a0e06 60%, #1a0804); background-clip: padding-box;
+  box-shadow: 0 3px 8px rgba(0,0,0,.6);
+  z-index: 2;
+}
+.evd-close {
+  position: absolute; right: -14px; top: -14px; width: 26px; height: 26px; border: 0; padding: 0; cursor: pointer;
+  background: var(--evd-close) center / 100% no-repeat; border-radius: 50%; z-index: 3;
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,.7));
+}
+.evd-close:hover { filter: brightness(1.25) drop-shadow(0 2px 3px rgba(0,0,0,.7)); }
+.evd-close:active { transform: scale(.92); }
+.evd-sep { height: 2px; margin: 8px 0; background: linear-gradient(90deg, transparent, rgba(255,210,120,.5), transparent); border: 0; }
+
+/* ---------------------------------------------------------------------------- buttons */
+.evd-btn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 96px; height: 28px; padding: 0 16px; cursor: pointer; pointer-events: auto;
+  font: 700 13px/1 var(--font); letter-spacing: .03em; color: #ffd76a; text-shadow: var(--ol);
+  background: linear-gradient(180deg, #c0321f 0%, #86150a 44%, #5e0b04 56%, #3c0602 100%);
+  border: 1px solid #140301; border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(255,214,130,.5), inset 0 2px 0 rgba(255,190,140,.35), inset 0 -3px 6px rgba(0,0,0,.35),
+              0 0 0 1px #b88a36, 0 0 0 2px #1a0e02, 0 3px 5px rgba(0,0,0,.55);
+  transition: filter .12s, color .12s;
+}
+.evd-btn:hover { filter: brightness(1.2); color: #fff3c0; }
+.evd-btn:active { transform: translateY(1px); filter: brightness(.88); }
+.evd-btn:disabled, .evd-btn.disabled { filter: grayscale(1) brightness(.55); cursor: default; }
+.evd-btn:focus-visible { outline: 2px solid #ffe9a0; outline-offset: 3px; }
+.evd-btn.big { height: 44px; min-width: 250px; font: 700 18px/1 var(--serif); letter-spacing: .08em; }
+.evd-btn.dark {
+  background: linear-gradient(180deg, #4a4032 0%, #2a2218 45%, #1c160e 55%, #120d08 100%); color: #f0d890;
+}
+.evd-btn.green { background: linear-gradient(180deg, #3aa030 0%, #1c6a14 45%, #104808 55%, #0a3004 100%); color: #eaffd0; }
+.evd-btn.small { height: 22px; min-width: 64px; font-size: 12px; padding: 0 10px; }
+.evd-iconbtn {
+  position: relative; width: 30px; height: 30px; padding: 0; border: 0; cursor: pointer; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #5a4a38, #1a120a 70%);
+  box-shadow: inset 0 0 0 2px #c9a24a, inset 0 0 0 3px #1a0e02, 0 2px 4px rgba(0,0,0,.6);
+}
+.evd-iconbtn img { position: absolute; inset: 5px; width: calc(100% - 10px); height: calc(100% - 10px); }
+.evd-iconbtn:hover { filter: brightness(1.25); }
+.evd-iconbtn:active { transform: scale(.94); }
+
+/* ---------------------------------------------------------------------------- status bars */
+.evd-bar {
+  --c: #1fbf1f; --dim: rgba(8,40,8,.85);
+  position: relative; height: 14px; overflow: hidden;
+  background: linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.05) 40%, rgba(0,0,0,.4)), var(--dim);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.8);
+}
+.evd-bar > .fill, .evd-bar > .lag, .evd-bar > .ghost {
+  position: absolute; inset: 0; transform-origin: 0 50%; transform: scaleX(0); will-change: transform;
+}
+.evd-bar > .fill {
+  background: linear-gradient(180deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,.18) 38%, rgba(255,255,255,0) 50%, rgba(0,0,0,.12) 60%, rgba(0,0,0,.4) 100%), var(--c);
+  transition: transform .14s linear;
+}
+.evd-bar > .fill::after { /* fine texture lines for a painted "status bar" look */
+  content: ''; position: absolute; inset: 0;
+  background: repeating-linear-gradient(180deg, rgba(255,255,255,.05) 0 1px, transparent 1px 3px);
+}
+.evd-bar > .lag { background: linear-gradient(180deg, #fff4e0, #f0b090); opacity: .55; transition: transform .5s cubic-bezier(.5,0,.8,.4) .35s; }
+.evd-bar:not(.hp) > .lag { display: none; }
+.evd-bar.up > .lag { transition: none; }
+.evd-bar > .ghost { background: rgba(255,255,255,.28); } /* absorb / incoming heal */
+.evd-bar > .txt {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 5px;
+  font: 600 11px/1 var(--font); color: #fff; text-shadow: var(--ol); white-space: nowrap;
+}
+.evd-bar > .txt .l { margin-right: auto; } .evd-bar > .txt .r { margin-left: auto; }
+.evd-bar.hp { --c: #1fbf1f; --dim: rgba(4,34,4,.88); }
+.evd-bar.mana { --c: #1f63e8; --dim: rgba(4,12,44,.88); }
+.evd-bar.rage { --c: #d51c1c; --dim: rgba(44,4,4,.88); }
+.evd-bar.energy { --c: #f2d21b; --dim: rgba(44,38,4,.88); }
+.evd-bar.focus { --c: #e0852c; --dim: rgba(44,24,4,.88); }
+
+/* ---------------------------------------------------------------------------- item/ability slot */
+.evd-slot {
+  --q: #3a3226;
+  position: relative; width: 40px; height: 40px; flex: none;
+  background: linear-gradient(135deg, #2a241c, #0c0a08); border-radius: 3px;
+  box-shadow: 0 0 0 1px #000, inset 0 0 0 1px var(--q), inset 0 0 0 2px rgba(0,0,0,.8), inset 0 0 8px rgba(0,0,0,.9);
+}
+.evd-slot > img.ic { position: absolute; inset: 2px; width: calc(100% - 4px); height: calc(100% - 4px); border-radius: 2px; pointer-events: none; }
+.evd-slot.q-poor { --q: #6a6a6a; } .evd-slot.q-common { --q: #8a8a8a; } .evd-slot.q-uncommon { --q: #1eff00; }
+.evd-slot.q-rare { --q: #0070dd; } .evd-slot.q-epic { --q: #a335ee; } .evd-slot.q-legendary { --q: #ff8000; }
+.evd-slot[class*="q-"]:not(.q-common):not(.q-poor)::after {
+  content: ''; position: absolute; inset: 0; border-radius: 3px; pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--q), inset 0 0 8px var(--q);
+  opacity: .9;
+}
+.evd-slot > .cnt { position: absolute; right: 3px; bottom: 1px; font: 700 12px/1 var(--font); color: #fff; text-shadow: var(--ol); pointer-events: none; }
+.evd-slot.empty > img.ic { display: none; }
+
+/* ---------------------------------------------------------------------------- money */
+.evd-money { display: inline-flex; align-items: center; gap: 7px; font: 700 12px/1 var(--font); color: #fff; text-shadow: var(--ol); white-space: nowrap; }
+.evd-money i { display: inline-flex; align-items: center; gap: 2px; font-style: normal; }
+.evd-money i::after { content: ''; width: 12px; height: 12px; background: center / 100% no-repeat; filter: drop-shadow(0 1px 1px #000); }
+.evd-money i.g::after { background-image: var(--evd-coin-g); }
+.evd-money i.s::after { background-image: var(--evd-coin-s); }
+.evd-money i.c::after { background-image: var(--evd-coin-c); }
+
+/* ---------------------------------------------------------------------------- cooldown sweep (CSS-driven) */
+@property --evd-e { syntax: '<number>'; inherits: false; initial-value: 0; }
+@keyframes evd-sweepA { from { --evd-e: 0; } to { --evd-e: 1; } }
+@keyframes evd-sweepB { from { --evd-e: 0; } to { --evd-e: 1; } }
+.evd-cd {
+  position: absolute; inset: 2px; border-radius: 2px; pointer-events: none; display: none;
+  background:
+    conic-gradient(from calc(var(--evd-e) * 360deg - 2.5deg), rgba(255,236,170,0) 0deg, rgba(255,240,190,.75) 2.5deg, rgba(255,236,170,0) 5deg, transparent 5deg),
+    conic-gradient(transparent 0 calc(var(--evd-e) * 360deg), rgba(0,0,0,.72) 0);
+  animation-timing-function: linear; animation-fill-mode: forwards;
+}
+.evd-cd.on { display: block; }
+.evd-cd.gcd { background: conic-gradient(transparent 0 calc(var(--evd-e) * 360deg), rgba(0,0,0,.5) 0); }
+.evd-cd.aura { background: conic-gradient(rgba(0,0,0,.45) 0 calc(var(--evd-e) * 360deg), transparent 0); }
+.evd-cdtxt {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
+  font: 700 17px/1 var(--font); color: #fff4c8; text-shadow: var(--ol2);
+}
+.evd-cdtxt.soon { color: #ff5a3a; font-size: 18px; }
+
+/* ---------------------------------------------------------------------------- shared keyframes */
+@keyframes evd-fadein { from { opacity: 0 } to { opacity: 1 } }
+@keyframes evd-pop { 0% { transform: scale(.6); opacity: 0 } 60% { transform: scale(1.06); opacity: 1 } 100% { transform: scale(1) } }
+@keyframes evd-pulse { 0%,100% { opacity: .55 } 50% { opacity: 1 } }
+@keyframes evd-blink { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes evd-fillA { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+@keyframes evd-fillB { from { transform: scaleX(0) } to { transform: scaleX(1) } }
+@keyframes evd-slideA { from { transform: translateX(0) } to { transform: translateX(100%) } }
+@keyframes evd-slideB { from { transform: translateX(0) } to { transform: translateX(100%) } }
+
+/* scrollbars inside panels */
+.evd ::-webkit-scrollbar { width: 8px; height: 8px; }
+.evd ::-webkit-scrollbar-track { background: rgba(0,0,0,.35); }
+.evd ::-webkit-scrollbar-thumb { background: linear-gradient(90deg, #6a4a1a, #c9a24a, #6a4a1a); border-radius: 4px; border: 1px solid #000; }
