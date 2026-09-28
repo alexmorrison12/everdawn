@@ -16,7 +16,14 @@ console.log(JSON.stringify(await state()));
 await p.evaluate(() => { const A = __game; A.ui.emit('create:submit', { ...A.ui.create.get(), name: 'Refreshy', cls: 'mage', race: 'human', sex: 'male' }); });
 await new Promise(r => setTimeout(r, 4000));
 console.log('after enter', JSON.stringify(await state()));
-await p.reload({ waitUntil: 'load' }); await ready(); await new Promise(r => setTimeout(r, 1500));
+const code0 = await p.evaluate(() => __game.net?.code);
+await p.reload({ waitUntil: 'load' });
+if (code0) { // hosting: a refresh should land straight back in the world with the same room
+  await p.waitForFunction(() => window.__game && __game.mode === 'world' && __game.net?.code, { timeout: 90000 });
+  console.log('resumed', JSON.stringify({ before: code0, after: await p.evaluate(() => __game.net.code), mode: await p.evaluate(() => __game.mode) }));
+  await b.close(); process.exit(0);
+}
+await ready(); await new Promise(r => setTimeout(r, 1500));
 console.log('after reload', JSON.stringify(await state()));
 console.log(await click('Enter World')); await new Promise(r => setTimeout(r, 800));
 console.log('enter', JSON.stringify(await state()));
