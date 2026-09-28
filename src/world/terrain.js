@@ -58,7 +58,7 @@ export class Terrain {
     for (let k = 0; k < S * S; k++) hdata[k] = THREE.DataUtils.toHalfFloat(this.hf.h[k]);
     const ht = new THREE.DataTexture(hdata, S, S, THREE.RedFormat, THREE.HalfFloatType);
     ht.magFilter = THREE.LinearFilter; ht.minFilter = THREE.LinearFilter; ht.needsUpdate = true;
-    G.uHeightTex.value = ht;
+    G.uHeightTex.value = ht; this.heightTex = ht; // (a world switch points the shared uniform back at its own)
     G.uHeightInfo.value.set(S, S, -MAP.half, -MAP.half);
 
     // macro variation noise

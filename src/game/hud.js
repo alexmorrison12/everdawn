@@ -11,6 +11,7 @@ import { MOBS } from './data/mobs.js';
 import { drawMinimap, drawLairMinimap, areaAt, bakeWorldMap } from './map.js';
 import { Portraits } from './portrait.js';
 import { fmtMoney } from './game.js';
+import { ZONES } from './zones.js';
 import { procLit } from './combat.js';
 import { estimate } from './estimate.js';
 
@@ -125,7 +126,7 @@ export class HUD {
     ui.on('merchantSellJunk', () => { if (!this.game.sellJunk()) ui.alerts.error('You have no junk to sell.'); });
     ui.on('minimapClick', (fx, fy) => { const w = this.minimapToWorld(fx, fy); if (w) this.e.waypoints?.ping(w.x, w.z); });
     ui.on('minimapMark', (fx, fy) => { const w = this.minimapToWorld(fx, fy); if (w) this.e.waypoints?.place(w.x, w.z); });
-    ui.on('mapMark', (u, v) => { if (this.e.mode === 'world') { this.e.waypoints?.place(u * 1024 - 512, -440 + v * 720); this.drawWorldMap(); } });
+    ui.on('mapMark', (u, v) => { if (this.e.mode === 'world') { const [z0, z1] = this.game.zone.mapZ; this.e.waypoints?.place(u * 1024 - 512, z0 + v * (z1 - z0)); this.drawWorldMap(); } });
     ui.on('releaseSpirit', () => this.game.releaseSpirit());
     ui.on('roll', (id, choice) => this.onRoll(id, choice));
     ui.on('settings', s => this.e.applySettings?.(s));
@@ -271,14 +272,16 @@ export class HUD {
       return d;
     };
     const vendor = def.vendor;
-    if (offers.length === 1 && !vendor) return openQuest(offers[0].q, offers[0].kind);
+    if (offers.length === 1 && !vendor && !def.flight) return openQuest(offers[0].q, offers[0].kind);
     const options = offers.map(o => ({ label: o.q.title, type: o.kind === 'offer' ? 'questAvailable' : o.kind === 'complete' ? 'questComplete' : 'questIncomplete', id: o.q.id }));
     if (vendor) options.push({ label: 'Let me browse your goods.', type: 'vendor', id: 'shop' });
+    if (def.flight) options.push({ label: `Fly to ${ZONES[def.flight].home} (50 copper)`, type: 'taxi', id: 'fly' });
     if (!options.length && !def.greet) return;
     ui.questDialog.open({
       mode: 'gossip', npc: { name: def.name }, title: def.name, text: def.greet || 'Well met, adventurer.', options,
       onSelect: (opt) => {
         if (opt.id === 'shop') { this.openMerchant(npc); return; }
+        if (opt.id === 'fly') { const p = game.player; if (p.gold < 50) { ui.alerts.error("You don't have enough money."); return; } ui.questDialog.close(); this.e.travelTo(def.flight, ZONES[def.flight].flightArrive, { fly: true }).then(ok => { if (ok) { p.gold -= 50; this.bagsDirty = true; } }); return; }
         const o = offers.find(x => x.q.id === opt.id); if (o) openQuest(o.q, o.kind);
       },
     });
@@ -460,45 +463,45 @@ export class HUD {
       ui.minimap.set({ zone: 'The Ember Maw', zoneType: 'hostile', time: `${hh}:${mm}`, facing: p.facing - e.cam.yaw, dayPhase: 0.9 });
       return;
     }
-    if (!this.worldMapCv) this.worldMapCv = bakeWorldMap(e.world.hf, e.world.settle, e.world.forest);
+    const Z = this.game.zone, mapCv = this.zoneMap();
     const markers = [];
     const game = this.game;
     for (const n of Object.values(game.npcs)) if (n.questMark) markers.push({ x: n.pos.x, z: n.pos.z, kind: n.questMark === '!' ? 'quest' : 'turnin', edge: true });
-    for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && a.progress[i] < (o.count ?? 1)) markers.push({ x: o.area[0], z: o.area[1], kind: 'area', edge: true }); }); }
+    for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && (o.zone || q.zone || 'vale') === game.zoneId && a.progress[i] < (o.count ?? 1)) markers.push({ x: o.area[0], z: o.area[1], kind: 'area', edge: true }); }); }
     if (p.party) for (const m of p.party.members) if (!m.offline) markers.push({ x: m.pos.x, z: m.pos.z, kind: 'party' });
     for (const w of this.e.waypoints?.markers() || []) markers.push(w);
     if (this.tracking && this.e.prof) markers.push(...this.e.prof.tracked(this.tracking));
     if (p.corpsePos && p.ghost) markers.push({ x: p.corpsePos.x, z: p.corpsePos.z, kind: 'corpse', edge: true });
     for (const u of game.sim.query(p.pos, this.mmRadius)) if (u.hostile && !u.dead && u.inCombat && u.target === p) markers.push({ x: u.pos.x, z: u.pos.z, kind: 'hostile' });
-    markers.push({ x: 0, z: -282, kind: 'portal', edge: p.level >= 9 });
-    drawMinimap(ctx, size, this.worldMapCv, p.pos, e.cam.yaw, markers, this.mmRadius);
-    const area = areaAt(p.pos.x, p.pos.z);
-    ui.minimap.set({ zone: 'Everdawn Vale', subzone: area === 'Everdawn Vale' ? undefined : area, zoneType: 'friendly', time: `${hh}:${mm}`, x: Math.round((p.pos.x + 512) / 10.24), y: Math.round((p.pos.z + 512) / 10.24), facing: p.facing - e.cam.yaw, dayPhase: e.world.tod });
-    if (area !== this.lastArea) { if (this.lastArea) ui.alerts.zone(area, area === 'Everdawn Vale' ? '' : 'Everdawn Vale'); this.lastArea = area; }
+    if (game.zoneId === 'vale') markers.push({ x: 0, z: -282, kind: 'portal', edge: p.level >= 9 });
+    for (const ex of Z.exits || []) markers.push({ x: ex.x, z: ex.z, kind: 'portal', edge: false });
+    drawMinimap(ctx, size, mapCv, p.pos, e.cam.yaw, markers, this.mmRadius);
+    const area = areaAt(p.pos.x, p.pos.z, Z.areas, Z.name);
+    ui.minimap.set({ zone: Z.name, subzone: area === Z.name ? undefined : area, zoneType: 'friendly', time: `${hh}:${mm}`, x: Math.round((p.pos.x + 512) / 10.24), y: Math.round((p.pos.z + 512) / 10.24), facing: p.facing - e.cam.yaw, dayPhase: e.world.tod });
+    if (area !== this.lastArea) { if (this.lastArea) ui.alerts.zone(area, area === Z.name ? '' : Z.name); this.lastArea = area; }
+  }
+  /** The painted map of the zone you're in (baked once per zone). */
+  zoneMap() {
+    const e = this.e; this.mapCv ||= {};
+    return this.mapCv[this.game.zoneId] ||= bakeWorldMap(e.world.hf, e.world.settle, e.world.forest);
   }
 
   drawWorldMap() {
     const ui = this.ui, cv = ui.worldMap?.canvas, e = this.e; if (!cv || e.mode !== 'world') return;
-    if (!this.worldMapCv) this.worldMapCv = bakeWorldMap(e.world.hf, e.world.settle, e.world.forest);
-    const ctx = cv.getContext('2d');
-    // show x -512..512, z -440..280 (the whole valley incl. Ember Peak)
-    const z0 = -440, z1 = 280;
-    ctx.drawImage(this.worldMapCv, 0, z0 + 512, 1024, z1 - z0, 0, 0, cv.width, cv.height);
+    const Z = this.game.zone, mapCv = this.zoneMap(), ctx = cv.getContext('2d');
+    // show x -512..512 and the zone's band of z (the Vale: the whole valley incl. Ember Peak)
+    const [z0, z1] = Z.mapZ;
+    ctx.drawImage(mapCv, 0, z0 + 512, 1024, z1 - z0, 0, 0, cv.width, cv.height);
+    if (ui.worldMap.titleEl) ui.worldMap.titleEl.textContent = Z.name;
     const U = x => (x + 512) / 1024, Vv = z => (z - z0) / (z1 - z0);
-    ui.worldMap.setLabels([
-      { name: 'Dawnhollow', x: U(10), y: Vv(165), kind: 'town' }, { name: 'Goldfield Farms', x: U(-160), y: Vv(125), levels: '1-3', kind: 'zone' },
-      { name: 'Whisperwood', x: U(150), y: Vv(70), levels: '2-5', kind: 'zone' }, { name: 'Mirrormere Lake', x: U(-70), y: Vv(-45), levels: '3-6', kind: 'zone' },
-      { name: 'Candlerock Mine', x: U(-168), y: Vv(-125), levels: '4-7', kind: 'poi' }, { name: 'Webwood Hollow', x: U(165), y: Vv(-150), levels: '5-8', kind: 'danger' },
-      { name: 'Redcloak Ruins', x: U(172), y: Vv(215), levels: '6-9', kind: 'danger' }, { name: 'The Ember Maw', x: U(0), y: Vv(-300), levels: 'Raid', kind: 'danger' },
-      { name: 'Ember Peak', x: U(0), y: Vv(-400), kind: 'poi' },
-    ]);
+    ui.worldMap.setLabels(Z.labels.map(([name, x, z, kind, levels]) => ({ name, x: U(x), y: Vv(z), kind, levels })));
     const p = this.game.player;
     ui.worldMap.setPlayer(U(p.pos.x), Vv(p.pos.z), p.facing);
     const mk = [];
     for (const n of Object.values(this.game.npcs)) if (n.questMark) mk.push({ x: U(n.pos.x), y: Vv(n.pos.z), type: n.questMark === '!' ? 'available' : 'complete', label: n.name });
     // objective areas are shaded blobs (a grey "?" reads as "turn in here")
-    for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && a.progress[i] < (o.count ?? 1)) mk.push({ x: U(o.area[0]), y: Vv(o.area[1]), type: 'area', w: (o.area[2] || 20) * 2 / 1024, h: (o.area[2] || 20) * 2 / Math.abs(z1 - z0), label: q.title, lines: [o.label] }); }); }
-    mk.push({ x: U(0), y: Vv(-282), type: 'boss', label: 'The Ember Maw' });
+    for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && (o.zone || q.zone || 'vale') === this.game.zoneId && a.progress[i] < (o.count ?? 1)) mk.push({ x: U(o.area[0]), y: Vv(o.area[1]), type: 'area', w: (o.area[2] || 20) * 2 / 1024, h: (o.area[2] || 20) * 2 / Math.abs(z1 - z0), label: q.title, lines: [o.label] }); }); }
+    if (this.game.zoneId === 'vale') mk.push({ x: U(0), y: Vv(-282), type: 'boss', label: 'The Ember Maw' });
     if (p.party) for (const m of p.party.members) if (!m.offline) mk.push({ x: U(m.pos.x), y: Vv(m.pos.z), type: 'party', cls: m.cls, label: m.name });
     for (const w of this.e.waypoints?.markers() || []) if (w.kind === 'wp') mk.push({ x: U(w.x), y: Vv(w.z), type: 'wp', color: w.color, label: w.label, lines: ['Middle-click it again to remove your own.'] });
     ui.worldMap.setMarkers(mk);

@@ -68,6 +68,7 @@ export class GuestSession {
 
   // ---------------------------------------------------------------- messages from the host
   onMessage(m) {
+    if (this.paused && (m.t === 's' || m.t === 'e' || m.t === 'force')) return; // loading another zone: the world arrives afterwards
     switch (m.t) {
       case 'hi': this.hostName = m.host || this.hostName; this.hello(); return;
       case 'welcome': this.retrying = false; this.welcomed(m); this.net.send({ t: 'kills', l: knownKills(this.app.dragon.day) }); return;
@@ -82,6 +83,7 @@ export class GuestSession {
       case 'inspect': this.app.interact?.showInspect(m.data); return;
       case 'trade': this.app.interact?.onTrade(this.resolve(m.from), m.m); return;
       case 'full': this.app.ui.alerts.error('That world is full (4 friends max).'); return;
+      case 'zone': this.app.travelTo(m.id, { x: m.x, z: m.z, facing: m.f }, { fromHost: true }); return;
       case 'pinv': bus.emit('popup', { kind: 'invite', from: m.from, onAccept: () => this.partyOp('accept'), onDecline: () => this.partyOp('decline') }); return;
       case 'dreq': bus.emit('popup', { kind: 'duel', from: m.from, onAccept: () => this.duelOp('accept'), onDecline: () => this.duelOp('decline') }); return;
       case 'closing': {
@@ -104,7 +106,8 @@ export class GuestSession {
     this.joined = true;
     this.myId = m.you; this.hostId = m.host; this.hostName = m.hostName || this.hostName;
     if (m.tod !== undefined) this.app.world.tod = m.tod;
-    if (m.pos && !m.raid) this.teleport(m.pos[0], m.pos[1]);
+    if (m.zone && m.zone !== (this.app.zoneId || 'vale') && !m.raid) this.app.travelTo(m.zone, { x: m.pos?.[0] ?? 0, z: m.pos?.[1] ?? 0 }, { fromHost: true }); // the host is in another zone: go there
+    else if (m.pos && !m.raid) this.teleport(m.pos[0], m.pos[1]);
     this.app.ui.alerts.raidWarning(`You joined ${this.hostName}'s world`, '#40ff80');
     bus.emit('chat', { ch: 'system', text: `Joined ${this.hostName}'s world. Their browser runs the realm; yours keeps your character. Humans online: 2.` });
     this.statsSig = '';
@@ -143,6 +146,9 @@ export class GuestSession {
     u.model?.dispose?.();
   }
   clearUnits() { for (const id of [...this.units.keys()]) this.despawn(id); }
+  /** Loading another zone: drop the old zone's units and ignore the stream until the new world is ready. */
+  pause() { this.paused = true; this.clearUnits(); }
+  resume() { this.paused = false; this.clearUnits(); this.net.send({ t: 'resync' }); }
   apply(row) {
     const [id, x, y, z, f, hp, hm, spd, fl, tgt, cid, ct, cd, lv, au, pw, st] = row;
     const u = this.units.get(id); if (!u) return;

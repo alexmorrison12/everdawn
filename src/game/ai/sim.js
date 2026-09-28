@@ -39,19 +39,22 @@ export class SimBrain {
     this.act = act; this.actT = 0; this.dest = null; this.camp = null; this.u.afk = false; this.u.fishing = false;
     if (act === 'quest') {
       const busy = c => this.s.sims.filter(o => o.brain?.act === 'quest' && o.brain.camp === c).length;
-      const ok = CAMPS.filter(c => c.lv[0] <= u.level + 1 && c.lv[1] >= u.level - 2 && busy(c) < 2);
+      const camps = this.g.zone?.camps || CAMPS;
+      const ok = camps.filter(c => c.lv[0] <= u.level + 1 && c.lv[1] >= u.level - 2 && busy(c) < 2);
       if (!ok.length) { this.set('town'); return; }
-      this.camp = (ok.length ? ok : CAMPS)[Math.floor(Math.random() * (ok.length || CAMPS.length))];
+      this.camp = (ok.length ? ok : camps)[Math.floor(Math.random() * (ok.length || camps.length))];
       const a = Math.random() * 6.28, rr = Math.random() * this.camp.r * 0.6;
       this.dest = [this.camp.x + Math.cos(a) * rr, this.camp.z + Math.sin(a) * rr];
       this.kills = 0; this.killGoal = 3 + Math.floor(Math.random() * 7);
       this.dur = 180 + Math.random() * 200;
     } else if (act === 'town') {
-      this.spot = TOWN_SPOTS[Math.floor(Math.random() * TOWN_SPOTS.length)];
+      const town = this.g.zone?.town || TOWN_SPOTS;
+      this.spot = town[Math.floor(Math.random() * town.length)];
       this.dest = [this.spot.x + (Math.random() - 0.5) * 4, this.spot.z + (Math.random() - 0.5) * 4];
       this.dur = 40 + Math.random() * 100;
     } else if (act === 'fish') {
-      this.spot = FISH_SPOTS[Math.floor(Math.random() * FISH_SPOTS.length)];
+      const fish = this.g.zone?.fish || FISH_SPOTS;
+      this.spot = fish[Math.floor(Math.random() * fish.length)];
       this.dest = [this.spot.x, this.spot.z];
       this.dur = 90 + Math.random() * 120;
     } else if (act === 'afk') { this.dur = 30 + Math.random() * 90; u.afk = true; }

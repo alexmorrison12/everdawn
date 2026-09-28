@@ -21,6 +21,8 @@ export class Sim {
       }
   }
   add(u) { this.units.push(u); return u; }
+  /** Another zone's terrain and buildings (travel). */
+  setWorld(world) { this.world = world; this.static = new Map(); for (const c of world.colliders) this.addStatic(c); }
   remove(u) { const i = this.units.indexOf(u); if (i >= 0) this.units.splice(i, 1); if (u.model) u.model.root.parent?.remove(u.model.root); }
   query(pos, r) {
     const out = [], r2 = r * r;

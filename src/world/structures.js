@@ -472,3 +472,13 @@ export function portalGate(kit, x, y, z, rot) {
   const [px, pz] = F.world(0, -1);
   kit.portal = { x: px, y: y + 9.6, z: pz, rot };
 }
+
+/** The Kingsroad gate: a stone arch where the road leaves one zone for the other. */
+export function kingsGate(kit, x, y, z, rot) {
+  const F = new Frame(x, y, z, rot);
+  for (const s of [-1, 1]) { kit.add('stone', box(4, 14, 4, 2), F.at(s * 7, 6, 0), { tint: 0xe6ded2, aoH: 8 }); kit.add('stone', box(5, 1, 5), F.at(s * 7, 13.3, 0), { tint: 0xd8d0c4 }); kit.boxCollider(...F.world(s * 7, 0), 4.4, 4.4, rot); }
+  kit.add('stone', box(18, 2.4, 4.4), F.at(0, 14.4, 0), { tint: 0xe6ded2 });
+  kit.add('paint', box(5, 1.2, 0.1), F.at(0, 14.4, 2.25), { tint: 0x2a4a9a, ao: false });
+  kit.torches = kit.torches || [];
+  for (const s of [-1, 1]) { const [bx, bz] = F.world(s * 7, 2.6); kit.torches.push(V(bx, y + 5, bz)); }
+}

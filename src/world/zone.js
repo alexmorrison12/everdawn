@@ -13,6 +13,7 @@ export const PLACES = {
   portal: { x: 0, z: -282, h: 52, name: 'The Ember Maw' },
   peak: { x: 0, z: -410, r: 210, h: 235, name: 'Ember Peak' },
   waterfall: { x: -70, z: -112 },
+  pass: { x: 322, z: 64, name: 'Kingsroad Pass' }, // the gate east to the Crownlands
 };
 
 // Candlerock cliffs: a ridge band on the north-west side of the lake.
@@ -21,7 +22,7 @@ export const RIDGE = [[-250, -128], [-190, -122], [-130, -128], [-75, -112], [-2
 // Dirt roads (control points, smoothed with Catmull-Rom).
 export const ROADS = [
   { w: 4.2, pts: [[10, 150], [-35, 142], [-95, 122], [-150, 104], [-215, 92]] },           // west to farms
-  { w: 4.2, pts: [[10, 150], [58, 142], [108, 112], [160, 84], [230, 72]] },               // east to forest
+  { w: 4.2, pts: [[10, 150], [58, 142], [108, 112], [160, 84], [230, 72], [282, 66], [340, 64], [420, 64]] }, // east to forest, then the Kingsroad Pass
   { w: 4.6, pts: [[10, 150], [14, 104], [24, 44], [40, -28], [52, -96], [50, -150], [74, -188], [36, -208], [64, -236], [22, -252], [4, -270]] }, // north: Ember Road (switchbacks)
   { w: 3.4, pts: [[20, 62], [-18, 44], [-54, 20]] },                                        // lake dock
   { w: 3.4, pts: [[58, 142], [108, 168], [148, 184]] },                                     // ruins

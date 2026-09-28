@@ -22,6 +22,7 @@ import { Waypoints, groundAt } from './game/waypoints.js';
 import { Professions } from './game/professions.js';
 import { Companions } from './game/companions.js';
 import { MARKS_PER_KILL } from './game/game.js';
+import { ZONES } from './game/zones.js';
 import { dailyDragon, AFFIXES } from './game/raid/daily.js';
 import { CinematicCam, TITLE_PATH, STAGE } from './game/cinematic.js';
 import { FX } from './fx/fx.js';
@@ -63,8 +64,9 @@ class App {
     this.dragon = dailyDragon();
     if (params.get('el')) this.dragon.element = params.get('el');
     setRemote(makeRemote());
-    this.world = new World();
+    this.world = new World('vale');
     await this.world.build(progress);
+    this.worlds = { vale: this.world }; this.zoneId = 'vale';
     this.renderer.setScene(this.world.scene, this.camera);
     this.cam = new OrbitCam(this.camera, (x, z) => this.world.heightAt(x, z));
     this.cam.boxes = worldBoxes(this.world);
@@ -157,15 +159,89 @@ class App {
     m.update(0.2, { speed: 0, combat: true, grounded: true });
     m.play?.('roar');
     for (let i = 0; i < 40; i++) m.update(1 / 30, { speed: 0, combat: true, grounded: true });
-    // carve it in stone: luminance of the painted colours × weathered granite, with moss in the crevices
-    const stone = lambert({ vertexColors: true }, { wrap: 0.35, spec: 0.25, shine: 12, rim: 0.12, key: 'statue-stone',
-      fragment: fs => fs.replace('#include <color_fragment>', `#include <color_fragment>
-        { float l = dot(diffuseColor.rgb, vec3(0.3, 0.5, 0.2)); float n = fract(sin(dot(floor(vWPos * 7.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-          vec3 g = vec3(0.62, 0.6, 0.56) * (0.55 + l * 0.9) * (0.92 + n * 0.12);
-          diffuseColor.rgb = mix(g, vec3(0.32, 0.4, 0.22), smoothstep(0.35, 0.1, l) * 0.35); }`) });
+    const stone = stoneMaterial();
     m.root.traverse(o => { if (o.isMesh) o.material = stone; });
     u.frozenModel = true;
     g.sim.add(u); g.npcs.statue = u;
+  }
+
+  // The Valley of Kings outside Aurelion's west gate: six stone heroes, larger than life.
+  async raiseKings(w) {
+    const heroes = [['human', 'm', 'warrior', 'roar'], ['elf', 'f', 'mage', 'castOmni'], ['dwarf', 'm', 'paladin', 'cheer'], ['orc', 'm', 'warrior', 'point'], ['human', 'f', 'priest', 'bow'], ['elf', 'm', 'hunter', 'roar']];
+    const stone = stoneMaterial();
+    for (const [i, s] of (w.settle.statues || []).entries()) {
+      const [race, sex, cls, pose] = heroes[i % heroes.length];
+      const m = createModel(['humanoid', { race, sex, cls, gearTier: 3, seed: 900 + i }]);
+      m.update(0.2, { speed: 0, combat: true, grounded: true }); m.play?.(pose);
+      for (let k = 0; k < 40; k++) m.update(1 / 30, { speed: 0, combat: true, grounded: true });
+      m.root.traverse(o => { if (o.isMesh) { o.material = stone; o.castShadow = true; } });
+      m.root.scale.setScalar(3.1); m.root.position.set(s.x, s.y, s.z); m.root.rotation.y = s.rot;
+      w.scene.add(m.root);
+      await new Promise(r => setTimeout(r, 0));
+    }
+  }
+
+  // ------------------------------------------------------------------ zones
+  /** Put another zone's world on screen (built already): its terrain, lights, effects and inhabitants. */
+  activateWorld(zone, w = this.worlds[zone]) {
+    const old = this.world, g = this.game;
+    if (!w || old === w) return;
+    this.bridge.leaveWorld(old);
+    this.prof.endFish(null); this.prof.clearNodes(g.sim);
+    g.swapZone(zone, w);
+    this.world = w; this.zoneId = zone;
+    w.cycle = old.cycle; w.setTime(old.tod);
+    this.renderer.setScene(w.scene, this.camera); this.renderer.setQuality(this.renderer.quality, w);
+    G.uHeightTex.value = w.terrain.heightTex;
+    this.fx.setScene(w.scene, (x, z) => w.heightAt(x, z)); this.fx.useGlobalHeight?.();
+    this.ring.attach(w.scene);
+    w.scene.add(this.ambAnchor); w.scene.add(this.lantern);
+    this.cam.heightFn = (x, z) => w.heightAt(x, z); this.cam.boxes = worldBoxes(w); this.cam._first = true;
+    this.bridge.worldAnchors(w); this.bridge.worldLoops(w);
+    this.prof.spawnNodes(w, g.sim, zone);
+    this.companions.reparent();
+    this.hud.lastArea = null; this.hud.trackerDirty = true;
+  }
+  /** Walk through a zone gate, fly, or hearth home. The first visit builds the zone (a loading screen); a friend's
+   *  browser follows its host (net/host.js tells it to), and can't lead the group itself. */
+  async travelTo(zone, arrive = null, o = {}) {
+    if (this.traveling || zone === this.zoneId || this.mode !== 'world' || !this.game.player) return false;
+    if (this.guest && !o.fromHost) { this.ui.alerts.error(`${this.guest.hostName} leads the group between zones. Ask them to come through.`); return false; }
+    const Z = ZONES[zone], p = this.game.player; if (!Z) return false;
+    arrive = arrive || Z.arrive;
+    this.traveling = true;
+    try {
+      this.game.duels.forfeit(p); this.waypoints.clearAll(); this.interact.closeMenu(); this.ui.loot.close();
+      if (this.ui.merchant.isOpen) this.ui.merchant.close();
+      this.ui.screen('loading');
+      const tip = zone === 'crown' ? 'Tip: Aurelion\'s Quartermaster takes Ember Marks too. So does the one in Dawnhollow.' : 'Tip: Your hearthstone always brings you home to Dawnhollow.';
+      this.ui.loading.set({ zone: Z.name, tip, progress: 0.05, stage: o.hearth ? 'Hearthstone' : o.fly ? 'Taking flight…' : 'Travelling…' });
+      this.net?.zoneStart?.(zone, arrive);
+      this.guest?.pause();
+      await new Promise(r => setTimeout(r, 40));
+      let w = this.worlds[zone];
+      if (!w) {
+        w = new World(zone);
+        await w.build((f, label) => this.ui.loading.set({ zone: Z.name, tip, progress: 0.05 + f * 0.8, stage: label }));
+        this.worlds[zone] = w;
+        if (zone === 'crown') await this.raiseKings(w);
+      }
+      this.activateWorld(zone, w);
+      p.pos.set(arrive.x, w.heightAt(arrive.x, arrive.z), arrive.z); p.vy = 0; p.dash = null; p.corpsePos = p.ghost ? p.pos.clone() : p.corpsePos;
+      if (arrive.facing != null) p.facing = arrive.facing;
+      this.cam.yaw = p.facing; this.cam.pitch = 0.3;
+      w.terrain.warm(p.pos);
+      this.ui.loading.set({ zone: Z.name, tip, progress: 1, stage: 'Arriving' });
+      await new Promise(r => setTimeout(r, 60));
+      this.ui.screen(null); this.ui.setHUDVisible(true);
+      bus.emit('zone_text', { title: Z.name, sub: '' });
+      this.music(Z.music);
+      this.save();
+      this.net?.zoneDone?.(zone, arrive);
+      this.guest?.resume();
+      return true;
+    } catch (e) { console.error('travel failed', e); this.ui.screen(null); this.ui.setHUDVisible(true); return false; }
+    finally { this.traveling = false; }
   }
 
   // ------------------------------------------------------------------ audio (optional module)
@@ -205,6 +281,7 @@ class App {
 
   // ------------------------------------------------------------------ screens
   async showTitle() {
+    if (this.zoneId !== 'vale') this.activateWorld('vale'); // the title flies over the Vale
     this.mode = 'title';
     if (params.get('join') && !this.joinPrompted) { this.joinPrompted = true; setTimeout(() => this.openTogether(params.get('join')), 700); } // an invite link
     this.cine.play(TITLE_PATH, Math.random() * 40);
@@ -312,6 +389,7 @@ class App {
     const vs = readChallenge();
     if (vs && !this.watching) setTimeout(() => this.ui.alerts.raidWarning(`${vs.name} challenges you: ${vs.value.toLocaleString()} ${vs.role === 'heal' ? 'HPS' : 'DPS'} in ${fmtTime(vs.killTime)}. Beat it.`, '#ffd040'), 3000);
     if (this.hostWanted) { this.hostWanted = false; this.startHosting(this.hostCode); }
+    if (ch.zone && ch.zone !== this.zoneId && !this.guest && ZONES[ch.zone]) setTimeout(() => this.travelTo(ch.zone, { x: ch.pos?.[0], z: ch.pos?.[1] }), 50); // logged out in another zone
     if (this.guest) this.rememberSession({ char: p.name });
     if (this.guest && !this.guest.hooked) { this.guest.hooked = true; this.guest.hook(); this.guest.hello(); this.guestBadge = new GuestBadge(this.guest.hostName); return; }
     if (toRaid) setTimeout(() => this.enterRaid(), 300);
@@ -684,7 +762,7 @@ class App {
     else this.cam.update(dt, focus, p.facing, { moving: st.pc.moving && st.pc.camFollow !== false, dragging: this.input.dragging });
     if (this.mode === 'world') {
       this.world.update(dt, this.camera, p.pos);
-      this.flyover.update(dt);
+      if (this.zoneId === 'vale') this.flyover.update(dt);
       this.ambAnchor.position.copy(p.pos);
       this.lantern.position.set(p.pos.x, p.pos.y + 2.6, p.pos.z); this.lantern.intensity = (this.world.night || 0) * 9;
       const night = this.world.night || 0, forest = this.world.hf.maskAt(p.pos.x, p.pos.z, M.FOREST);
@@ -733,6 +811,16 @@ class App {
     }
     return { log, result: r.result && { killTime: Math.round(r.result.killTime), attempts: r.result.attempts, player: r.result.player } };
   }
+}
+
+/** Weathered granite for statues: the painted colours' brightness × stone, with moss in the crevices. */
+let STONE_MAT = null;
+function stoneMaterial() {
+  return STONE_MAT ||= lambert({ vertexColors: true }, { wrap: 0.35, spec: 0.25, shine: 12, rim: 0.12, key: 'statue-stone',
+    fragment: fs => fs.replace('#include <color_fragment>', `#include <color_fragment>
+      { float l = dot(diffuseColor.rgb, vec3(0.3, 0.5, 0.2)); float n = fract(sin(dot(floor(vWPos * 7.0), vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+        vec3 g = vec3(0.62, 0.6, 0.56) * (0.55 + l * 0.9) * (0.92 + n * 0.12);
+        diffuseColor.rgb = mix(g, vec3(0.32, 0.4, 0.22), smoothstep(0.35, 0.1, l) * 0.35); }`) });
 }
 
 const appInst = new App();

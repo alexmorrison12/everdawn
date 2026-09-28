@@ -52,8 +52,9 @@ export class Social {
     return 'Player' + Math.floor(rng.next() * 9999);
   }
 
-  spawnPopulation(n = 34) {
+  spawnPopulation(n = 34, { guild = true } = {}) {
     for (let i = 0; i < n; i++) this.spawnSim();
+    if (!guild) { for (const s of this.sims) if (!s.guild && this.rng.next() < 0.45) s.guild = pick(this.rng, GUILDS); return; }
     // a guild roster the player may join later
     this.guildName = pick(this.rng, GUILDS);
     const roster = this.sims.filter((_, i) => i % 3 === 0);
@@ -69,10 +70,11 @@ export class Social {
     const arch = o.arch || pick(rng, archKeys);
     const level = o.level || Math.max(1, Math.min(10, Math.round(1 + rng.next() * 9.6)));
     let x, z, tries = 0;
-    do { // spawn around town or on roads
-      const a = rng.next() * 6.28, r = 20 + rng.next() * 200;
-      x = PLACES.village.x + Math.cos(a) * r * 0.9; z = PLACES.village.z - 60 + Math.sin(a) * r; tries++;
-    } while ((g.world.heightAt(x, z) < 0.8 || g.world.hf.slopeAt(x, z) > 0.4) && tries < 30);
+    const A = g.zone?.simSpawn || { x: PLACES.village.x, z: PLACES.village.z - 60, r: 200 };
+    do { // spawn around town or on roads (in a capital: its streets, not inside the houses)
+      const a = rng.next() * 6.28, r = (A.city ? 10 : 20) + rng.next() * A.r;
+      x = A.x + Math.cos(a) * r * 0.9; z = A.z + Math.sin(a) * r; tries++;
+    } while ((g.world.heightAt(x, z) < 0.8 || g.world.hf.slopeAt(x, z) > 0.4 || (A.city && Math.hypot(...g.sim.resolve(x, z, 0.8).map((v, i) => v - [x, z][i])) > 0.01)) && tries < 40);
     const u = new Unit({ name: o.name || this.makeName(), kind: 'sim', hostile: false, level, cls, race, sex: rng.next() < 0.42 ? 'f' : 'm', pos: new THREE.Vector3(x, g.world.heightAt(x, z), z) });
     u.persona = { arch, skill: ARCHETYPES[arch].skill * (0.7 + rng.next() * 0.3), chatty: ARCHETYPES[arch].chatty };
     u.role = cls === 'priest' || (cls === 'paladin' && rng.next() < 0.5) ? 'heal' : (cls === 'warrior' && rng.next() < 0.4) ? 'tank' : 'dps';
@@ -102,7 +104,7 @@ export class Social {
   respawnSim(u) {
     const g = this.g;
     u.dead = false; u.brain.deadT = 0; u.hp = u.hpMax; u.auras = []; u.target = null; u.threat.clear(); u.inCombat = false;
-    const x = 52 + (this.rng.next() - 0.5) * 6, z = 118 + (this.rng.next() - 0.5) * 6;
+    const [gx, gz] = this.g.zone?.graveyard || [52, 118], x = gx + (this.rng.next() - 0.5) * 6, z = gz + (this.rng.next() - 0.5) * 6;
     u.pos.set(x, g.world.heightAt(x, z), z);
     u.stateAnim.dead = false; u.model?.revive?.();
     u.brain.choose();

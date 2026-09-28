@@ -64,10 +64,10 @@ export const AREAS = [
   { name: 'The Ember Road', x: 45, z: -180, r: 60 },
   { name: 'Ember Peak', x: 0, z: -330, r: 90 },
 ];
-export function areaAt(x, z) {
+export function areaAt(x, z, areas = AREAS, fallback = 'Everdawn Vale') {
   let best = null, bd = Infinity;
-  for (const a of AREAS) { const d = Math.hypot(x - a.x, z - a.z) / a.r; if (d < 1 && d < bd) { bd = d; best = a; } }
-  return best ? best.name : 'Everdawn Vale';
+  for (const a of areas || AREAS) { const d = Math.hypot(x - a.x, z - a.z) / a.r; if (d < 1 && d < bd) { bd = d; best = a; } }
+  return best ? best.name : fallback;
 }
 
 /** Draws the minimap (rotating with the camera) into ctx of size px, radius in metres. */

@@ -24,6 +24,9 @@ export const ITEMS = {
   bread: { name: 'Fresh Dawnhollow Bread', icon: 'food', rarity: 'common', stack: 20, use: 'eat' },
   water: { name: 'Refreshing Spring Water', icon: 'drink', rarity: 'common', stack: 20, use: 'drink' },
   hearthstone: { name: 'Hearthstone', icon: 'hearthstone', rarity: 'common', use: 'hearth', flavor: 'Returns you to Dawnhollow.' },
+  sealedOrders: { name: 'Sealed Orders', icon: 'letter', rarity: 'common', quest: true, flavor: 'Stamped with the seal of the Dawnhollow Watch.' },
+  greymaskInsignia: { name: 'Greymask Insignia', icon: 'redBandana', rarity: 'common', quest: true, stack: 20 },
+  stolenTin: { name: 'Crate of Stolen Tin', icon: 'oreTin', rarity: 'common', quest: true, stack: 20 },
   // ---- professions (game/professions.js): tools, catches, ore, herbs and what you make from them
   fishingPole: { name: 'Fishing Pole', icon: 'fishingPole', rarity: 'common', tool: 'fishing', sell: 1, flavor: 'Point the pointy end at the water.' },
   dragonscalePole: { name: 'Dragonscale Fishing Pole', icon: 'fishingPoleGold', rarity: 'rare', tool: 'fishing', toolBonus: 25, sell: 12, flavor: 'The line never tangles. The fish can tell.' },

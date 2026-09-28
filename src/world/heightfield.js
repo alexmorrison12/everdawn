@@ -86,6 +86,9 @@ export class Heightfield {
       h += smoothstep(-16, -2, rs.d) * (1 - step) * taper * 2.5;
     }
 
+    // the Kingsroad Pass: a notch through the eastern mountains to the Crownlands
+    const pass = (1 - smoothstep(14, 44, Math.abs(z - 65 + n.noise2(x / 50, 3.3) * 6))) * smoothstep(210, 262, x);
+    if (pass > 0) h = lerp(h, 8.5 + n.fbm2(x / 60, z / 60, 2) * 1.5 + Math.max(0, x - 330) * 0.02, pass * 0.96);
     // no stray puddles: dry land stays above the waterline outside the lake/pool
     h = Math.max(h, 0.6);
     // Mirrormere basin

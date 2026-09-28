@@ -49,7 +49,8 @@ void main() {
 }`;
 
 export class Water {
-  constructor(sky) {
+  /** rect: { x, z, w, d } of water to cover (default: Mirrormere Lake). */
+  constructor(sky, rect = null) {
     const L = PLACES.lake;
     this.u = {
       uTime: G.uTime, uHeightTex: G.uHeightTex, uHeightInfo: G.uHeightInfo, uNoiseTex: G.uNoiseTex,
@@ -58,10 +59,10 @@ export class Water {
       uFogColor: G.uFogColor, uFogSunColor: G.uFogSunColor, uFogDensity: G.uFogDensity, uFogHeight: G.uFogHeight, uFogBase: G.uFogBase, uSunDir: G.uSunDir, uCamPos: G.uCamPos,
     };
     const mat = new THREE.ShaderMaterial({ vertexShader: vert, fragmentShader: frag, uniforms: this.u, transparent: true, depthWrite: false });
-    const geo = new THREE.PlaneGeometry(L.rx * 2.6, L.rz * 2.9, 90, 70);
+    const geo = rect ? new THREE.PlaneGeometry(rect.w, rect.d, 120, 200) : new THREE.PlaneGeometry(L.rx * 2.6, L.rz * 2.9, 90, 70);
     geo.rotateX(-Math.PI / 2);
     this.mesh = new THREE.Mesh(geo, mat);
-    this.mesh.position.set(L.x, WATER_Y, L.z - 12);
+    if (rect) this.mesh.position.set(rect.x, WATER_Y, rect.z); else this.mesh.position.set(L.x, WATER_Y, L.z - 12);
     this.mesh.renderOrder = 5;
   }
 }

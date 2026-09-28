@@ -38,12 +38,23 @@ day, and so does the global race to kill it.
 - **Player to player.** Right-click anyone (friend or SimPlayer) to whisper, invite, inspect, trade, follow or
   challenge them to a duel. Groups work like WoW's: invite either way, promote, remove, leave, and a friend who
   refreshes keeps their slot. Middle-click the ground or a map to drop a waypoint your group sees as a beam of light.
+- **Two zones and a capital.** Everdawn Vale (levels 1–10, the Ember Maw) and, east through the Kingsroad Pass, the
+  Crownlands (levels 5–10) with Aurelion, the Crown City: white walls and blue roofs, a canal, a cathedral, the royal
+  keep, a market, an old town, a dwarven forge quarter and a harbour full of ships. Walk the pass, take a gryphon, or
+  hearth home. Playing together, the host leads the group between zones.
+- **Professions.** Fishing (a rod, a bobber, a bite), Mining and Herbalism (tracked on the minimap), Cooking at any
+  fire (or a Basic Campfire), Alchemy, and Blacksmithing at the forge; WoW-style skill-ups to 150.
+- **Ember Marks.** Every dragon kill pays marks; the Quartermasters in Dawnhollow and Aurelion trade them for pre-raid
+  gear a step below the dragon's, elixirs, fireworks, the Emberling pet and the Ashen Strider mount. The dragon's own
+  drake mount is rideable, and friends see each other's mounts.
 - **Legendaries.** Beyond the dragon's epics, a sliver of a chance at one orange item per class, each with an effect of
   its own (dragonfire on hit, or a second heal from the dawn).
 - **The usual MMO furniture.** Spellbook (drag abilities onto your bar), quest log, a Social window, merchants who buy
-  anything (right-click an item to sell it, with buyback), area loot with Auto Loot, and a Game Menu with Log Out.
+  anything (right-click an item to sell it, with buyback), area loot with Auto Loot, a DPS/HPS estimate on the
+  character sheet (item tooltips show what equipping would change), drag-and-drop bags, and a Game Menu with Log Out.
 - **Real competition.**
-  - Daily boards for World First, Fastest Kill, Top DPS and HPS, and a Speedrun (character creation to kill).
+  - Daily boards for World First, Fastest Kill, Top DPS and HPS, and a Speedrun (character creation to kill), shared
+    with the realm's AI raid groups and with friends you've played with.
   - Warcraft-Logs-style parse colours.
   - A share card and challenge links.
 - **Fully procedural.** Every mesh, texture, animation, sound and song is generated in code at load time. There
@@ -81,13 +92,13 @@ work inside the Claude artifact view, whose sandbox blocks peer connections; use
 | Left mouse drag | Look around |
 | Both mouse buttons | Run forward |
 | Space | Jump (you keep your momentum and can't steer in the air, as in WoW) |
-| Num Lock / Num / | Autorun / walk |
+| \\ or Num Lock / Num / | Autorun / walk |
 | 1 – = | Action bar (Shift-drag to move or remove an ability) |
 | Tab | Target the nearest enemy |
 | Right-click | Attack / talk / loot (Shift-click a corpse to pick items when Auto Loot is on) |
 | Middle-click (or Alt+click) | Waypoint for your group, on the ground, the minimap or the world map |
 | Enter | Chat (`/invite`, `/leave`, `/duel`, `/who`, `/roll`, `/logout`…) |
-| C, B, P, L, O, M, N, H | Character, bags, spellbook, quest log, social, map, damage meter, help |
+| C, B, P, L, K, O, M, N, H | Character, bags, spellbook, quest log, professions, social, map, damage meter, help |
 | Esc | Clear target, close windows, Game Menu |
 
 On phones and tablets (landscape), drag the left side of the screen to move and drag anywhere else to look around.
@@ -108,8 +119,9 @@ rebuilds on change, and `node tools/serve.mjs dist 5199` serves it on localhost.
 reports console errors. `node tools/mobile.mjs` checks the touch controls on an emulated phone. `node tools/coop.mjs`
 opens two browsers, hosts and joins over real WebRTC, and checks shared combat, chat and kill credit (`--raid` runs
 the dragon together, `--party` checks groups, duels and waypoints, `--refresh` and `--social` cover reconnects,
-trades and inspect). `node tools/features.mjs` checks the spellbook, quest log, merchants, loot, duels, movement and
-logout on their own.
+trades and inspect). `node tools/features.mjs` checks the spellbook, quest log, merchants, loot, duels, movement, professions, mounts
+and logout on their own, and `node tools/zones.mjs` walks to the Crownlands and back (`coop.mjs --zones` does it
+together).
 
 The global leaderboard is optional. Apply `supabase/schema.sql` to a Supabase project, then fill in `SUPABASE_URL`,
 `SUPABASE_KEY` (the publishable key) and `PUBLIC_URL` in `src/meta/remote.js`. Without them the boards are local to

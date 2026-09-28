@@ -218,7 +218,7 @@ export class QuestDialog {
       for (const opt of o.options || []) {
         const r = h('div', 'qo ptr', ul);
         const ic = h('img', '', r);
-        ic.src = opt.type === 'questAvailable' ? questMarkURL('available') : opt.type === 'questComplete' ? questMarkURL('complete') : opt.type === 'questIncomplete' ? questMarkURL('incomplete') : glyphURL(opt.type === 'vendor' ? 'greed' : 'waiting');
+        ic.src = opt.type === 'questAvailable' ? questMarkURL('available') : opt.type === 'questComplete' ? questMarkURL('complete') : opt.type === 'questIncomplete' ? questMarkURL('incomplete') : glyphURL(opt.type === 'vendor' ? 'greed' : opt.type === 'taxi' ? 'arrowR' : 'waiting');
         if (opt.type && opt.type.startsWith('quest')) ic.classList.add('qm');
         h('span', '', r, opt.label);
         r.addEventListener('click', () => { if (o.onSelect) o.onSelect(opt); this.ui.emit('gossip', opt); });

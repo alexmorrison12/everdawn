@@ -19,6 +19,7 @@ import { RNG } from '../core/noise.js';
 import { G } from '../engine/materials.js';
 import { Social } from './social.js';
 import { Duels } from './duel.js';
+import { ZONES, zoneOf } from './zones.js';
 
 // Ember Marks: every dragon kill pays them; the Quartermaster takes them
 export const MARKS_PER_KILL = 5;
@@ -51,6 +52,7 @@ export class GameState {
     this.npcs = {};
     this.time = 0;
     this.settings = { sens: 1, invertY: false };
+    this.zoneId = 'vale'; this.zoneStash = {}; // the zone you're in; the others wait here while you're away
     this.social = new Social(this);
     this.duels = new Duels(this);
     bus.on('death', e => this.onDeath(e));
@@ -60,6 +62,8 @@ export class GameState {
     bus.on('spell_go', e => { if (!e.$net) e.unit.model?.play?.(e.spell.anim || 'castDirected'); });
     bus.on('swing', e => { if (!e.$net) e.unit.model?.play?.(e.unit.cls === 'warrior' ? (Math.random() < 0.5 ? 'attack2h' : 'attack1h') : 'attack'); });
   }
+
+  get zone() { return zoneOf(this.zoneId); }
 
   // ------------------------------------------------------------ units
   addModel(u, spec) {
@@ -199,15 +203,15 @@ export class GameState {
   }
 
   spawnCamps() {
-    const rng = new RNG(777);
-    for (const camp of CAMPS) {
+    const rng = new RNG(777 + this.zoneId.length);
+    for (const camp of this.zone.camps) {
       for (let i = 0; i < camp.n; i++) {
         let x, z, tries = 0;
         do {
           const a = rng.range(0, Math.PI * 2), r = Math.sqrt(rng.next()) * camp.r;
           x = camp.x + Math.cos(a) * r; z = camp.z + Math.sin(a) * r; tries++;
           const h = this.world.heightAt(x, z);
-          const ok = camp.mob === 'gurgler' ? (h > -1.0 && h < 1.6) : h > 0.8 && this.world.hf.slopeAt(x, z) < 0.45;
+          const ok = camp.mob === 'gurgler' || camp.mob === 'saltfin' ? (h > -1.0 && h < 1.6) : h > 0.8 && this.world.hf.slopeAt(x, z) < 0.45;
           if (ok) break;
         } while (tries < 40);
         const lv = rng.int(camp.lv[0], camp.lv[1]);
@@ -217,16 +221,22 @@ export class GameState {
       }
     }
     // named elites
-    const named = [['greymaw', 176, 22, 7], ['waxbeard', -165, -104, 6], ['vex', 172, 186, 9]];
-    for (const [k, x, z, lv] of named) { const spot = { key: k, x, z, lv, named: true }; spot.unit = this.spawnMob(k, x, z, lv); this.spawnPoints.push(spot); }
+    for (const [k, x, z, lv] of this.zone.named) { const spot = { key: k, x, z, lv, named: true }; spot.unit = this.spawnMob(k, x, z, lv); this.spawnPoints.push(spot); }
     // Greymaw patrols
-    const gm = this.spawnPoints.find(s => s.key === 'greymaw').unit;
-    gm.brain.t = { ...gm.brain.t, wander: 26 };
+    const gm = this.spawnPoints.find(s => s.key === 'greymaw')?.unit;
+    if (gm) gm.brain.t = { ...gm.brain.t, wander: 26 };
   }
 
   spawnCritters() {
     const rng = new RNG(4711);
-    const groups = [
+    const groups = this.zoneId === 'crown' ? [
+      ['rabbit', ['brown', 'grey'], [[-200, 30, 40], [-300, -30, 30], [-60, -120, 30]], 12],
+      ['deer', ['doe', 'buck', 'fawn'], [[-320, 80, 40], [-80, -180, 40]], 6],
+      ['chicken', ['white', 'brown'], [[-144, 118, 8], [-120, 142, 8]], 8],
+      ['sheep', ['white', 'white', 'black', 'lamb'], [[-206, 118, 14], [-110, 132, 12]], 8],
+      ['cat', ['ginger', 'grey', 'black', 'calico'], [[120, 20, 20], [60, 90, 14], [250, 0, 12]], 6],
+      ['crow', ['crow', 'raven'], [[-230, 60, 14], [-176, 196, 14]], 6],
+    ] : [
       ['rabbit', ['brown', 'grey', 'white'], [[-60, 120, 30], [60, 100, 25], [-110, 60, 25], [40, 60, 30]], 14],
       ['deer', ['doe', 'doe', 'buck', 'fawn'], [[120, 20, 30], [200, 90, 30], [-220, -20, 30]], 7],
       ['chicken', ['white', 'brown', 'black'], [[-140, 122, 8], [0, 176, 10], [-100, 128, 6]], 9],
@@ -249,6 +259,7 @@ export class GameState {
 
   spawnNPCs() {
     for (const [id, n] of Object.entries(NPCS)) {
+      if ((n.zone || 'vale') !== this.zoneId) continue; // each zone's own people
       const [x, z] = n.pos;
       const u = new Unit({ name: n.name, kind: 'npc', hostile: false, level: n.guard ? 20 : 10, pos: V3(x, this.world.heightAt(x, z), z), hp: 2000, dmgMin: 30, dmgMax: 45 });
       u.facing = Math.atan2(-(n.face[0] - x), -(n.face[1] - z));
@@ -391,7 +402,10 @@ export class GameState {
     const u = this.player;
     if (u.inCombat) return bus.emit('error', { unit: u, msg: "You can't do that while in combat" });
     if (u.cdLeft('hearth') > 0) return bus.emit('error', { unit: u, msg: 'Hearthstone is not ready yet' });
-    u.casting = { id: 'hearth', spell: { name: 'Hearthstone', icon: 'hearthstone', target: 'self' }, t: 0, dur: 5, target: u, channel: false, custom: () => { const P = PLACES.village; u.pos.set(P.x - 8, 0, P.z - 18); u.pos.y = this.world.heightAt(u.pos.x, u.pos.z); u.cooldowns.set('hearth', 120); this.cam._first = true; bus.emit('fx', { name: 'blinkIn', pos: u.pos.clone() }); } };
+    u.casting = { id: 'hearth', spell: { name: 'Hearthstone', icon: 'hearthstone', target: 'self' }, t: 0, dur: 5, target: u, channel: false, custom: () => {
+      const P = PLACES.village; u.cooldowns.set('hearth', 120);
+      if (this.zoneId !== 'vale') { this.e.travelTo?.('vale', { ...ZONES.vale.hearth, facing: 0 }, { hearth: true }); return; } // home is in the Vale
+      u.pos.set(P.x - 8, 0, P.z - 18); u.pos.y = this.world.heightAt(u.pos.x, u.pos.z); this.cam._first = true; bus.emit('fx', { name: 'blinkIn', pos: u.pos.clone() }); } };
     bus.emit('cast_start', { unit: u, spell: u.casting.spell, id: 'hearth', dur: 5 });
   }
 
@@ -603,7 +617,7 @@ export class GameState {
   releaseSpirit() {
     const p = this.player; if (!p.dead) return;
     p.corpsePos = p.pos.clone();
-    const gy = V3(52, 0, 118); gy.y = this.world.heightAt(gy.x, gy.z);
+    const [gx, gz] = this.zone.graveyard, gy = V3(gx, 0, gz); gy.y = this.world.heightAt(gy.x, gy.z);
     p.pos.copy(gy); p.ghost = true; p.dead = false; p.hp = 1;
     p.addAura('ghost', p);
     G.uDesat.value = 1; this.e.renderer.F.uDesat.value = 0.6;
@@ -696,6 +710,34 @@ export class GameState {
     this.updateModels(dt);
   }
 
+  /** Travel: this zone's creatures, NPCs and SimPlayers wait here, frozen, and the next zone's come out (spawned the
+   *  first time). You, your friends and SimPlayers in your group come along. The App swaps the rendered world. */
+  swapZone(id, world) {
+    const p = this.player, keep = u => u === p || u.kind === 'remote' || (u.kind === 'sim' && !!p?.party && u.party === p.party);
+    const staying = this.sim.units.filter(u => !keep(u) && u.kind !== 'node' && u.kind !== 'object');
+    const movers = this.sim.units.filter(keep);
+    this.zoneStash[this.zoneId] = { units: staying, spawnPoints: this.spawnPoints, respawns: this.respawns, corpses: this.corpses, npcs: this.npcs, sims: this.social.sims.filter(s => !keep(s)) };
+    this.sim.units = [...movers];
+    this.sim.setWorld(world);
+    this.world = world; this.scene = world.scene;
+    for (const u of movers) if (u.model) this.scene.add(u.model.root);
+    for (const u of staying) u.target = null;
+    this.zoneId = id;
+    const st = this.zoneStash[id], partySims = movers.filter(u => u.kind === 'sim');
+    delete this.zoneStash[id];
+    if (st) {
+      this.sim.units.push(...st.units); this.spawnPoints = st.spawnPoints; this.respawns = st.respawns; this.corpses = st.corpses; this.npcs = st.npcs;
+      this.social.sims = [...st.sims, ...partySims];
+    } else {
+      this.spawnPoints = []; this.respawns = []; this.corpses = []; this.npcs = {}; this.social.sims = [...partySims];
+      if (!this.mirror) { this.spawnCamps(); this.social.spawnPopulation(this.zone.pop, { guild: false }); }
+      this.spawnNPCs(); this.spawnCritters();
+    }
+    for (const u of this.sim.units) if (u.brain && u.kind === 'sim' && !partySims.includes(u)) u.brain.choose?.();
+    this.refreshQuestMarkers();
+    bus.emit('zone_changed', { zone: id });
+  }
+
   /** Joining a friend: this realm's own mobs and SimPlayers leave; the host's arrive as mirrored units instead.
    *  NPCs (quest givers) and critters stay local: quests are per character and critters are scenery. */
   becomeMirror() {
@@ -727,7 +769,13 @@ export class GameState {
     const p = this.player;
     // reach objectives + portal prompt
     if (Math.floor(this.time * 2) !== Math.floor((this.time - dt) * 2)) {
-      const P = PLACES.portal, dP = Math.hypot(p.pos.x - P.x, p.pos.z - P.z);
+      const P = PLACES.portal, dP = this.zoneId === 'vale' ? Math.hypot(p.pos.x - P.x, p.pos.z - P.z) : 1e9;
+      // the zone's gates: walk through to travel (a friend's host leads the way)
+      for (const ex of this.zone.exits || []) {
+        const dx = Math.hypot(p.pos.x - ex.x, p.pos.z - ex.z);
+        if (dx < ex.r && !p.dead && !p.ghost && !this.exitPrompted) { this.exitPrompted = true; this.e.travelTo?.(ex.to, ex.arrive); }
+        else if (dx > ex.r + 12) this.exitPrompted = false;
+      }
       if (dP < 16 && p.quests.length) this.progressQuests(o => o.type === 'reach' && o.place === 'portal');
       if (dP < 13 && !p.dead && !p.ghost) {
         if (!this.portalPrompted) {

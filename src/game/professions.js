@@ -9,6 +9,7 @@ import { RNG } from '../core/noise.js';
 import { M } from '../world/heightfield.js';
 import { lambert } from '../engine/materials.js';
 import { WATER_Y, PLACES } from '../world/zone.js';
+import { CROWN, CITY } from '../world/crown.js';
 
 export const MAX_SKILL = 150;
 export const PROFS = {
@@ -40,6 +41,18 @@ const VALE = {
   briarthorn: (w, x, z) => w.hf.maskAt(x, z, M.FOREST) > 0.6 && (Math.hypot(x - PLACES.forest.x, z - PLACES.forest.z) < 120 || Math.hypot(x - PLACES.webwood.x, z - PLACES.webwood.z) < 90),
   embergrass: (w, x, z) => w.hf.maskAt(x, z, M.ASH) > 0.2 && w.hf.slopeAt(x, z) < 0.45 && Math.hypot(x - PLACES.peak.x, z - PLACES.peak.z) > 55,
 };
+// …and in the Crownlands (tin and emberite in the King's Quarry, herbs in the farmland and the Thornwood)
+const outsideCity = (x, z) => Math.hypot(x - CITY.x, z - CITY.z) > CITY.r + 30;
+const nearQ = (x, z, r) => Math.hypot(x - CROWN.places.quarry.x, z - CROWN.places.quarry.z) < r;
+const CROWN_NODES = {
+  copper: (w, x, z) => outsideCity(x, z) && w.hf.slopeAt(x, z) > 0.12 && (nearQ(x, z, 80) || Math.hypot((x - 40) / 470, z / 440) > 0.7),
+  tin: (w, x, z) => outsideCity(x, z) && (nearQ(x, z, 60) || (Math.hypot((x - 40) / 470, z / 440) > 0.78 && w.hf.slopeAt(x, z) > 0.15)),
+  emberite: (w, x, z) => nearQ(x, z, 34),
+  peacebloom: (w, x, z) => outsideCity(x, z) && (w.hf.maskAt(x, z, M.MEADOW) > 0.25 || w.hf.maskAt(x, z, M.FARM) > 0.2) && w.hf.slopeAt(x, z) < 0.25,
+  silverleaf: (w, x, z) => outsideCity(x, z) && w.hf.maskAt(x, z, M.FOREST) > 0.45 && w.hf.slopeAt(x, z) < 0.35,
+  briarthorn: (w, x, z) => w.hf.maskAt(x, z, M.FOREST) > 0.55 && Math.hypot(x - CROWN.places.grove.x, z - CROWN.places.grove.z) < 120,
+};
+const WHERE = { vale: VALE, crown: CROWN_NODES };
 // what bites where (weights), and the skill a zone's water wants
 const WATERS = {
   vale: { req: 1, table: [['trout', 44], ['sunfish', 40], ['oldBoot', 9], ['pearl', 4]] },
@@ -104,7 +117,7 @@ export class Professions {
   spawnNodes(world, sim, zone = 'vale') {
     this.clearNodes(sim);
     this.world = world; this.sim = sim;
-    const where = zone === 'vale' ? VALE : this.app.zoneNodes?.(zone) || {};
+    const where = WHERE[zone] || {};
     const rng = new RNG('nodes-' + zone);
     for (const [type, test] of Object.entries(where)) {
       const def = NODES[type]; let placed = 0;
@@ -284,7 +297,7 @@ export class Professions {
     for (let i = this.respawn.length - 1; i >= 0; i--) {
       const r = this.respawn[i]; r.t -= dt; if (r.t > 0 || !this.world) continue;
       this.respawn.splice(i, 1);
-      const test = (this.zone === 'vale' ? VALE : this.app.zoneNodes?.(this.zone) || {})[r.type]; if (!test) continue;
+      const test = (WHERE[this.zone] || {})[r.type]; if (!test) continue;
       for (let k = 0; k < 400; k++) {
         const x = this.rng.range(-440, 440), z = this.rng.range(-440, 440);
         if (!this.world.hf.inBounds(x, z, 30) || this.world.heightAt(x, z) < WATER_Y + 0.6 || this.world.hf.maskAt(x, z, M.ROAD) > 0.2 || !test(this.world, x, z)) continue;

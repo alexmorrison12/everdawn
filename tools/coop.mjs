@@ -239,6 +239,26 @@ if (process.argv.includes('--social')) {
     return { out, back: await H.evaluate(() => ({ mode: __game.mode, name: __game.game.player?.name, sims: __game.game.sim.units.filter(u => u.kind === 'player').length })) };
   });
   await shot(H, 'host_party');
+} else if (process.argv.includes('--zones')) {
+  await step('host travels to the Crownlands: the guest comes along', async () => {
+    await H.evaluate(async () => { await __game.travelTo('crown'); });
+    for (let i = 0; i < 40; i++) { if (await Gp.evaluate(() => __game.game.zoneId === 'crown' && !__game.traveling && !__game.guest.paused)) break; await wait(500); }
+    await wait(3000);
+    return {
+      host: await H.evaluate(() => ({ zone: __game.game.zoneId, proxies: __game.net.proxies().map(p => [p.name, Math.round(p.pos.x), Math.round(p.pos.z)]) })),
+      guest: await Gp.evaluate(() => { const A = __game, g = A.game, h = [...A.guest.units.values()].find(u => u.name === 'Hostia'); return { zone: g.zoneId, at: [Math.round(g.player.pos.x), Math.round(g.player.pos.z)], units: A.guest.units.size, host: h ? [Math.round(h.pos.x), Math.round(h.pos.z)] : null, crownMobs: [...A.guest.units.values()].filter(u => u.template === 'prowler' || u.template === 'greymask').length, npcs: Object.keys(g.npcs).length }; }),
+    };
+  });
+  await step('the guest can\'t lead the group through a gate', async () => {
+    const r = await Gp.evaluate(async () => { const ok = await __game.travelTo('vale'); return { ok, zone: __game.game.zoneId }; });
+    return { ...r, said: await Gp.evaluate(() => [...document.querySelectorAll('.evd-err, [class*=err]')].map(e => e.textContent).find(t => /leads the group/.test(t)) || null) };
+  });
+  await step('host goes home; the guest follows back to the Vale', async () => {
+    await H.evaluate(async () => { await __game.travelTo('vale'); });
+    for (let i = 0; i < 40; i++) { if (await Gp.evaluate(() => __game.game.zoneId === 'vale' && !__game.traveling && !__game.guest.paused)) break; await wait(500); }
+    await wait(2500);
+    return Gp.evaluate(() => { const A = __game; return { zone: A.game.zoneId, units: A.guest.units.size, host: !![...A.guest.units.values()].find(u => u.name === 'Hostia'), wolves: [...A.guest.units.values()].filter(u => u.template === 'wolf').length }; });
+  });
 } else if (process.argv.includes('--refresh')) {
   await step('host refreshes; comes back to the same room; the guest reconnects', async () => {
     const before = await H.evaluate(() => __game.net.code);

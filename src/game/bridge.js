@@ -134,31 +134,40 @@ export class Bridge {
   }
   forceMusic(track) { this.musicWant = this.musicNow = track; try { this.audio?.music(track); } catch { } }
 
-  // positional loops (waterfall, forge, campfire, portal lava)
+  // positional loops (waterfall, forge, campfire, portal lava), per world: travel stops one zone's and starts the other's
   worldLoops(world) {
-    if (!this.audio || this.loopsStarted) return;
-    this.loopsStarted = true;
+    this.world = world;
+    if (!this.audio || world.loops) return;
     const L = world.settle.lights, P = [];
     if (world.waterfall?.userData.mist) P.push(['waterfall', world.waterfall.userData.mist, 1]);
     for (const f of L.forges) P.push(['fireCrackle', f, 0.7]);
     for (const c of L.campfires) P.push(['fireCrackle', c, 0.9]);
     if (world.settle.portal) P.push(['lava', { x: world.settle.portal.x, y: world.settle.portal.y, z: world.settle.portal.z }, 0.8]);
-    this.loops = P.map(([n, pos, vol]) => this.safe(() => this.audio.loop(n, { pos, vol })));
+    world.loops = P.map(([n, pos, vol]) => this.safe(() => this.audio.loop(n, { pos, vol })));
+    this.loops = world.loops;
   }
 
-  // world ambience: persistent emitters at settlement anchors (called once per world build)
+  // world ambience: persistent emitters at settlement anchors (kept per world so travel can take them down)
   worldAnchors(world) {
-    const fx = this.fx; if (!fx) return;
-    const L = world.settle.lights;
+    const fx = this.fx; if (!fx || world.fxHandles) return;
+    const L = world.settle.lights, H = world.fxHandles = [];
+    const at = (...a) => { const h = fx.attach(...a); if (h) H.push(h); };
     this.safe(() => {
-      for (const p of L.chimneys) fx.attach('chimneySmoke', p);
-      for (const p of L.torches) fx.attach('torch', p);
-      for (const p of L.forges) fx.attach('campfire', p, { scale: 0.6 });
-      for (const p of L.campfires) fx.attach('campfire', p);
-      if (world.settle.portal) fx.attach('portal', new THREE.Vector3(world.settle.portal.x, world.settle.portal.y - 2.2, world.settle.portal.z), { facing: world.settle.portal.rot + Math.PI, scale: 1.35 });
-      fx.attach('volcanoSmoke', new THREE.Vector3(0, world.heightAt(0, -410) + 8, -410));
-      if (world.waterfall?.userData.mist) fx.attach('waterfallMist', world.waterfall.userData.mist, { width: 9 });
+      for (const p of L.chimneys) at('chimneySmoke', p);
+      for (const p of L.torches) at('torch', p);
+      for (const p of L.forges) at('campfire', p, { scale: 0.6 });
+      for (const p of L.campfires) at('campfire', p);
+      if (world.settle.portal) at('portal', new THREE.Vector3(world.settle.portal.x, world.settle.portal.y - 2.2, world.settle.portal.z), { facing: world.settle.portal.rot + Math.PI, scale: 1.35 });
+      if (world.zone !== 'crown') at('volcanoSmoke', new THREE.Vector3(0, world.heightAt(0, -410) + 8, -410));
+      if (world.waterfall?.userData.mist) at('waterfallMist', world.waterfall.userData.mist, { width: 9 });
     });
+  }
+  /** Leaving a zone: its fire, smoke and sound anchors stop (they'd float in the next zone otherwise). */
+  leaveWorld(world) {
+    for (const h of world.fxHandles || []) this.safe(() => h.stop?.(0));
+    world.fxHandles = null;
+    for (const l of world.loops || []) this.safe(() => l?.stop?.(0.5));
+    world.loops = null;
   }
 
   // per-frame: footsteps, ambience mix, listener, hurt/flash decay

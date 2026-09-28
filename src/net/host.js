@@ -112,6 +112,7 @@ export class HostSession {
       case 'emote': if (p && !p.dead) { p.model?.play?.(m.anim); if (m.text) this.g.social.post('emote', null, `${p.name} ${m.text}`, { unit: p, $from: gst.id }); } return;
       case 'bye': this.leave(gst.id); return;
       case 'party': this.partyOp(gst, m); return;
+      case 'resync': gst.known.clear(); gst.pa = null; return; // their world just loaded: send everything again
       case 'kills': if (addFriendKills(m.l)) for (const o of this.guests.values()) if (o !== gst && o.proxy) this.send(o, { t: 'kills', l: m.l }); return; // leaderboard entries: keep, pass on
       case 'duel': {
         if (!p) return;
@@ -158,7 +159,7 @@ export class HostSession {
 
   welcome(gst, ch) {
     if (!ch || !ch.cls) return;
-    if (gst.proxy) { this.send(gst, { t: 'welcome', you: gst.proxy.id, host: this.me?.id, hostName: this.me?.name, tod: this.app.world.tod, raid: this.raiding ? this.raidInfo() : null }); return; }
+    if (gst.proxy) { this.send(gst, { t: 'welcome', you: gst.proxy.id, host: this.me?.id, hostName: this.me?.name, tod: this.app.world.tod, zone: this.app.zoneId, pos: [r1(gst.proxy.pos.x), r1(gst.proxy.pos.z)], raid: this.raiding ? this.raidInfo() : null }); return; }
     const g = this.g, host = this.me;
     // join beside the host (or by the portal while the host is raiding)
     const base = this.raiding ? this.app.raid.worldPos : host?.pos || new THREE.Vector3(10, 0, 150);
@@ -185,7 +186,7 @@ export class HostSession {
     }
     this.app.ui.alerts.info(`${u.name} has joined your world!`);
     bus.emit('sound', { name: 'questComplete' });
-    this.send(gst, { t: 'welcome', you: u.id, host: host?.id, hostName: host?.name, tod: this.app.world.tod, pos: [r1(x), r1(z)], raid: this.raiding ? this.raidInfo() : null });
+    this.send(gst, { t: 'welcome', you: u.id, host: host?.id, hostName: host?.name, tod: this.app.world.tod, zone: this.app.zoneId, pos: [r1(x), r1(z)], raid: this.raiding ? this.raidInfo() : null });
     this.send(gst, { t: 'kills', l: knownKills(this.app.dragon.day) }); // today's boards include each other
     this.badge.render();
   }
@@ -371,6 +372,19 @@ export class HostSession {
 
   // ---------------------------------------------------------------- the raid, together
   raidInfo() { const r = this.app.raid; return r ? { dragon: { ...r.dragon }, attempt: r.attempt } : null; }
+  /** The host is travelling to another zone: friends come along (their browsers load it too). */
+  zoneStart(zone, arrive) {
+    let i = 0;
+    for (const gst of this.guests.values()) {
+      if (!gst.proxy) continue;
+      const a = (i++ / 4) * Math.PI * 2, x = arrive.x + Math.cos(a) * 3, z = arrive.z + Math.sin(a) * 3;
+      this.send(gst, { t: 'zone', id: zone, x: r1(x), z: r1(z), f: r2(arrive.facing ?? 0) });
+    }
+  }
+  zoneDone() {
+    for (const u of this.proxies()) { const gst = this.byProxy.get(u); if (gst) gst.known.clear(); }
+    this.resetKnown();
+  }
   /** Host entered the raid with its friends in the roster: move every guest into their mirrored lair. */
   raidStart() {
     const r = this.app.raid; this.resultSent = false; this.raidLive = true;

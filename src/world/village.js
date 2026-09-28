@@ -87,6 +87,11 @@ export function buildSettlements(world) {
   const R = PLACES.ruins;
   S.ruins(kit, R.x, H(R.x, R.z), R.z, H);
 
+  // ---------- Kingsroad Pass: the road east to the Crownlands ----------
+  const KP = PLACES.pass;
+  S.kingsGate(kit, KP.x, H(KP.x, KP.z), KP.z, face(KP.x, KP.z, KP.x - 40, KP.z));
+  S.signpost(kit, 292, H(292, 72), 72, -1.2);
+
   // ---------- The Ember Maw ----------
   const P = PLACES.portal;
   S.portalGate(kit, P.x, H(P.x, P.z + 2), P.z, face(P.x, P.z, P.x, P.z + 40));
@@ -103,7 +108,7 @@ export function buildSettlements(world) {
 }
 
 // ---------- crops: wheat, pumpkins, cabbages ----------
-function buildCrops(hf) {
+export function buildCrops(hf) {
   const g = new THREE.Group(); g.name = 'crops';
   const rng = new RNG(88), nz = new Simplex(88);
   // wheat clump geometry

@@ -16,7 +16,7 @@ export function serializeChar(g) {
     name: p.name, race: p.race, sex: p.sex, cls: p.cls, appearance: p.appearance, level: p.level, xp: p.xp, gold: p.gold,
     equip: p.equip, bags: p.bags, quests: p.quests, questsDone: [...p.questsDone], guild: g.social?.guild || null,
     pos: [p.pos.x, p.pos.z], hasMount: !!g.hasMount, created: p.created || Date.now(), playedMs: (p.playedMs || 0), jump: !!p.jump,
-    speedrunDone: !!p.speedrunDone, marks: p.marks || 0, skills: p.skills, bar: g.pc?.custom ? g.pc.bar.slice(0, 10) : undefined,
+    speedrunDone: !!p.speedrunDone, zone: g.zoneId || 'vale', marks: p.marks || 0, skills: p.skills, bar: g.pc?.custom ? g.pc.bar.slice(0, 10) : undefined,
   };
 }
 
