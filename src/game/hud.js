@@ -6,11 +6,12 @@ import { bus } from './events.js';
 import { SPELLS } from './data/spells.js';
 import { CLASSES, RACES, xpToNext, MAX_LEVEL } from './data/classes.js';
 import { QUEST, NPCS } from './data/quests.js';
-import { ITEMS, statLines, SLOTS } from './items.js';
+import { ITEMS, statLines, SLOTS, procText } from './items.js';
 import { MOBS } from './data/mobs.js';
 import { drawMinimap, drawLairMinimap, areaAt, bakeWorldMap } from './map.js';
 import { Portraits } from './portrait.js';
 import { fmtMoney } from './game.js';
+import { procLit } from './combat.js';
 
 const _v = new THREE.Vector3();
 const CH_MAP = { whisper: 'whisperIn', whisper_out: 'whisperOut', localdefense: 'general', raid: 'raid', rw: 'raidWarning' };
@@ -26,13 +27,15 @@ export function uiItem(it, id) {
   const o = { id: id || it.uid, name: it.name, icon: it.icon || 'unknown', rarity: it.rarity || 'common', flavor: it.flavor, sell: it.sell ? it.sell * 25 : undefined };
   if (it.quest) { o.questItem = true; o.bind = 'pickup'; }
   if (it.gear) {
-    o.bind = it.rarity === 'epic' ? 'pickup' : 'equip';
+    o.bind = it.rarity === 'epic' || it.rarity === 'legendary' ? 'pickup' : 'equip';
+    if (it.unique) o.unique = true;
+    if (it.proc && it.proc.id !== 'dawnlight') o.chance = [procText(it.proc)];
     o.slot = SLOT_NAME[it.slot]; o.type = it.slot === 'weapon' ? (it.cls === 'warrior' ? 'Sword' : it.cls === 'mage' ? 'Staff' : 'Mace') : it.slot === 'back' ? 'Cloth' : it.armorType === 'plate' ? 'Plate' : 'Cloth';
     if (it.armor) o.armor = it.armor;
     if (it.dmgMin) { o.damage = { min: it.dmgMin * 10, max: it.dmgMax * 10, speed: it.speed }; o.dps = +(((it.dmgMin + it.dmgMax) / 2 * 10) / it.speed).toFixed(1); }
     o.stats = {}; for (const k in STAT_NAMES) if (it.stats?.[k]) o.stats[STAT_NAMES[k]] = it.stats[k];
     o.equip = statLines(it).filter(l => l.text.startsWith('Equip:')).map(l => l.text.replace(/^Equip: /, ''));
-    o.itemLevel = it.ilvl; o.reqLevel = Math.max(1, it.ilvl - 3); o.classes = [CLASSES[it.cls]?.name];
+    o.itemLevel = it.ilvl; o.reqLevel = Math.max(1, Math.min(MAX_LEVEL, it.ilvl - 3)); o.classes = [CLASSES[it.cls]?.name]; // raid gear asks for the level cap, not above it
     o.tint = it.tier >= 3 ? undefined : undefined;
   }
   if (it.mount) { o.bind = 'pickup'; o.use = ['Summons and dismisses a rideable drake.']; o.flavor = 'The Maw remembers. So does this drake.'; }
@@ -309,7 +312,7 @@ export class HUD {
       if (!id) return null;
       const sp = SPELLS[id]; if (!sp) return null;
       const learned = !sp.learn || sp.learn <= p.level;
-      const cd = p.cdLeft(id);
+      const lit = learned && procLit(p, sp, id, t), cd = lit ? 0 : p.cdLeft(id); // a lit ability is ready now, whatever its cooldown
       const chk = learned ? g.combat.canCast(p, id, sp.target === 'ally' ? (t && !p.isEnemy(t) ? t : p) : t) : { ok: false };
       return {
         icon: sp.icon, name: sp.name, spell: spellTip(sp, p), keybind: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='][i],
@@ -318,7 +321,7 @@ export class HUD {
         usable: learned && !(sp.requiresAura && !p.hasAura(sp.requiresAura)) && !(sp.requiresTargetBelow && (!t || t.hpPct > sp.requiresTargetBelow)),
         noResource: chk.err === 'Not enough mana' || chk.err === 'Not enough rage' || chk.err === 'Not enough energy',
         outOfRange: chk.err === 'Out of range',
-        proc: (sp.instantWith && p.hasAura(sp.instantWith)) || (id === 'fireBlast' && p.hasAura('heatingUp')) || (id === 'victoryRush' && p.hasAura('victorious')) || (id === 'execute' && t && !t.dead && t.hpPct < 0.2),
+        proc: lit,
         offGCD: !!sp.offGcd,
       };
     });

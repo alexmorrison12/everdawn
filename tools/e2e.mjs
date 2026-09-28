@@ -37,7 +37,22 @@ await step('die, release, resurrect', async () => { const e = __game, g = e.game
 await step('social: dance + whisper + invite', async () => { const e = __game, g = e.game; g.social.playerChat('/dance'); g.social.playerChat('/who'); const s = g.social.sims[0]; g.social.playerChat(`/w ${s.name} are you a bot?`); g.social.playerChat(`/invite ${s.name}`); e.step(60 * 6); return { party: g.player.party?.members.length || 0 }; });
 await step('enter raid via portal', async () => { const e = __game, g = e.game; e.tp(0, -272); e.step(90); const btn = [...document.querySelectorAll('button')].find(b => /enter/i.test(b.textContent) && b.offsetParent); if (btn) btn.click(); else e.enterRaid(); await new Promise(r => setTimeout(r, 400)); return e.mode; });
 await shot('raid');
-await step('raid fight (bot)', async () => { const e = __game; const r = await e.simRaid(900, 0.85); return r.log.slice(-3); });
+await step('raid fight (bot)', async () => { const e = __game; e.forceLegendary = true; const r = await e.simRaid(900, 0.85); return r.log.slice(-3); });
+await step('legendary drop: orange, requires level 10, rolled for, and it procs', async () => {
+  const e = __game, r = e.raid, p = e.game.player;
+  for (let i = 0; i < 200 && !document.querySelector('.evd-roll'); i++) e.frame(1 / 30);
+  const it = r.result.loot.find(x => x.rarity === 'legendary');
+  const rolls = [...document.querySelectorAll('.evd-roll')].map(x => ({ name: x.querySelector('.rn')?.textContent, color: x.querySelector('.rn')?.style.color }));
+  const tip = (() => { const row = [...document.querySelectorAll('.evd-roll')].find(x => x.querySelector('.rn')?.textContent === it.name)?.querySelector('.evd-slot'); if (!row) return null; row.dispatchEvent(new PointerEvent('pointerover', { bubbles: true })); return document.querySelector('.evd-tip')?.innerText; })();
+  // wear it and swing (or heal) sixty times: its effect should fire now and then
+  p.equip[it.slot] = it; e.game.applyGear(p);
+  const cb = r.combat, dmg = cb.damage.bind(cb), heal = cb.heal.bind(cb), dummy = r.raiders.find(m => m.kind === 'sim' && !m.dead) || r.boss; let procs = 0;
+  cb.damage = (a, b, n, sc, o = {}) => { if (o.proc) procs++; return dmg(a, b, n, sc, o); };
+  cb.heal = (a, b, n, o = {}) => { if (o.proc) procs++; return heal(a, b, n, o); };
+  for (let i = 0; i < 60; i++) { dummy.hp = dummy.hpMax - 500; dummy.dead = false; if (it.proc.id === 'dawnlight') cb.heal(p, dummy, 1); else cb.damage(p, dummy, 1, 'physical', { noMiss: true }); cb.update(0.3); }
+  cb.damage = dmg; cb.heal = heal;
+  return { tipHasLevel10: /Requires Level 10/.test(tip || ''), tipHasChance: /Chance on hit|Equip: Your heals/.test(tip || ''), effect: it.proc.id, procsIn60: procs, playerProcs: p.procs?.map(x => x.id), dropped: it?.name, orange: rolls.find(x => x.name === it.name)?.color, others: rolls.length - 1 };
+});
 await step('results screen', async () => { const e = __game; await new Promise(r => setTimeout(r, 9800)); return { screen: e.mode, results: !!document.querySelector('[class*=results]') }; });
 await shot('results');
 await step('share card', async () => { const e = __game; await e.shareCard(); const c = document.querySelector('canvas[width="1200"]'); return !!c; });

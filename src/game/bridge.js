@@ -97,7 +97,7 @@ export class Bridge {
     on('level_up', ({ unit: u }) => { fx?.burst('levelUp', new THREE.Vector3(u.pos.x, u.pos.y, u.pos.z)); this.play('levelUp'); this.e.renderer.F.uFlash.value = 0.35; });
     on('quest_accept', () => this.play('questAccept'));
     on('quest_complete', () => { this.play('questComplete'); fx?.burst('questComplete', chest(this.e.game.player)); });
-    on('loot_item', e => this.play(e.item?.rarity === 'epic' ? 'epicLoot' : 'itemPickup'));
+    on('loot_item', e => this.play(e.item?.rarity === 'legendary' ? 'legendary' : e.item?.rarity === 'epic' ? 'epicLoot' : 'itemPickup'));
     on('money', () => this.play('loot'));
     on('error', e => { if (e.unit === this.e.game.player) this.play('error', null, { vol: 0.5 }); });
     on('chat', e => { if (e.ch === 'whisper') this.play('whisper', null, { vol: 0.6 }); });

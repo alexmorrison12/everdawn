@@ -80,6 +80,7 @@ export class GameState {
       if (slot === 'weapon') { gs.dmgMin += it.dmgMin * 0.8; gs.dmgMax += it.dmgMax * 0.8; }
     }
     u.gearStats = gs;
+    u.procs = SLOTS.map(s => u.equip?.[s]?.proc).filter(Boolean); if (!u.procs.length) u.procs = null; // legendary effects (combat.js)
     u.recalc();
   }
 

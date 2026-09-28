@@ -57,10 +57,10 @@ export function makeGear(rng, cls, ilvl, rarity, slot = null) {
   if (rarity !== 'poor' && rarity !== 'common') {
     // class-appropriate suffix
     const pool = cls === 'warrior' ? SUFFIX.filter(s => s.s.str || s.s.ap || s.s.sta && !s.s.int) : SUFFIX.filter(s => s.s.int || s.s.sp || s.s.spi);
-    suffix = rarity === 'epic' ? null : rng.pick(pool);
+    suffix = rarity === 'epic' || rarity === 'legendary' ? null : rng.pick(pool);
     const src = suffix ? suffix.s : cls === 'warrior' ? { str: 0.9, sta: 0.9, crit: 0.08 } : { int: 0.9, sta: 0.6, sp: 1.0, crit: 0.08 };
     for (const k in src) stats[k] = Math.max(1, Math.round(src[k] * budget * (k === 'crit' ? 1 : 1)));
-    if (rarity === 'epic') { stats.crit = Math.max(1, Math.round(budget * 0.08)); }
+    if (rarity === 'epic' || rarity === 'legendary') { stats.crit = Math.max(1, Math.round(budget * 0.08)); }
   }
   const item = {
     uid: GID++, gear: true, slot, cls, ilvl, rarity,
@@ -79,6 +79,26 @@ export function makeGear(rng, cls, ilvl, rarity, slot = null) {
   return item;
 }
 
+// Legendary (orange): one named piece per class, a sliver of a chance from the dragon (raid/director.js). Each has
+// an effect of its own that Combat runs (procs).
+export const LEGENDARY_CHANCE = 0.05;
+export const LEGENDARIES = {
+  warrior: { slot: 'weapon', name: 'Maw-Eater, Greatsword of the Last Dragon', flavor: 'It still remembers being a tooth.', proc: { id: 'dragonfire', chance: 0.14, dmg: 55 } },
+  mage: { slot: 'weapon', name: 'Emberheart, Staff of the Undying Flame', flavor: 'Warm to the touch. Always. Even at the bottom of a lake.', proc: { id: 'dragonfire', chance: 0.18, dmg: 45 } },
+  priest: { slot: 'weapon', name: "Lastlight, the Dawn's Promise", flavor: 'The first light of the last day, hammered into a shape a hand can hold.', proc: { id: 'dawnlight', chance: 0.22, heal: 40 } },
+};
+export function makeLegendary(cls) {
+  cls = LEGENDARIES[cls] ? cls : 'warrior';
+  const def = LEGENDARIES[cls], it = makeGear(new RNG('legendary-' + cls), cls, 18, 'legendary', def.slot);
+  return Object.assign(it, { name: def.name, flavor: def.flavor, proc: { ...def.proc }, unique: true, uid: GID++ });
+}
+/** The effect line a proc shows in the tooltip. */
+export function procText(p) {
+  if (p?.id === 'dragonfire') return `Engulfs the enemy in dragonfire for ${p.dmg * 10} Fire damage.`;
+  if (p?.id === 'dawnlight') return `Equip: Your heals have a chance to call the dawn, healing your target again for ${p.heal * 10}.`;
+  return null;
+}
+
 export function statLines(item) {
   const names = { str: 'Strength', agi: 'Agility', sta: 'Stamina', int: 'Intellect', spi: 'Spirit' };
   const lines = [];
@@ -86,5 +106,6 @@ export function statLines(item) {
   if (item.stats?.ap) lines.push({ text: `Equip: +${item.stats.ap} Attack Power.`, color: '#1eff00' });
   if (item.stats?.sp) lines.push({ text: `Equip: Increases damage and healing done by magical spells by up to ${item.stats.sp}.`, color: '#1eff00' });
   if (item.stats?.crit) lines.push({ text: `Equip: Improves your chance to get a critical strike by ${item.stats.crit}%.`, color: '#1eff00' });
+  if (item.proc?.id === 'dawnlight') lines.push({ text: procText(item.proc), color: '#1eff00' });
   return lines;
 }

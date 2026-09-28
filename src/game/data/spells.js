@@ -88,7 +88,7 @@ export const SPELLS = {
     cost: c => 14 + c.L * 2, powerType: 'mana', cd: 8, range: 24, target: 'enemy', anim: 'castDirected', offGcd: true,
     fx: { impact: 'fireBlast' }, sound: 'fireImpact',
     effect: c => c.damage(c.target, R(c, 9, 12) + c.L * 4.2 + c.sp * 0.6, 'fire', { forceCrit: c.caster.hasAura('heatingUp'), canHeat: true }),
-    desc: c => `Blasts the enemy for ${Math.round(10 + c.L * 4.2)} Fire damage. Always critical while Heating Up. Not on the global cooldown.`,
+    desc: c => `Blasts the enemy for ${Math.round(10 + c.L * 4.2)} Fire damage. Not on the global cooldown. While Heating Up it always crits, costs nothing and ignores its cooldown.`,
   },
   frostNova: {
     name: 'Frost Nova', icon: 'frostNova', cls: 'mage', learn: 4, school: 'frost',
@@ -115,7 +115,7 @@ export const SPELLS = {
     cost: c => 30 + c.L * 3.5, powerType: 'mana', cast: 3.5, range: 36, target: 'enemy', anim: 'castDirected', instantWith: 'hotStreak',
     fx: { cast: 'castFire', projectile: 'pyroblast', impact: 'fireImpact' }, speed: 24, sound: 'castStartFire', launchSound: 'fireballLaunch', impactSound: 'fireImpact',
     effect: c => { c.damage(c.target, R(c, 26, 34) + c.L * 9.5 + c.sp * 1.6, 'fire', { canHeat: true }); c.aura(c.target, 'ignite', { tickDmg: 3 + c.L * 1.4 }); },
-    desc: c => `Hurls an immense fiery boulder for ${Math.round(30 + c.L * 9.5)} Fire damage. Instant with Hot Streak.`,
+    desc: c => `Hurls an immense fiery boulder for ${Math.round(30 + c.L * 9.5)} Fire damage. Instant and free with Hot Streak.`,
   },
   iceBarrier: {
     name: 'Ice Barrier', icon: 'iceBarrier', cls: 'mage', learn: 9, school: 'frost',

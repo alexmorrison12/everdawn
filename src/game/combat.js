@@ -6,6 +6,14 @@ import { RNG } from '../core/noise.js';
 import { SCALE } from './unit.js';
 
 const MELEE_REACH = 2.6;
+const PROC = { dragonfire: { name: 'Dragonfire', icon: 'fireBreath' }, dawnlight: { name: 'Dawnlight', icon: 'flashHeal' } }; // legendary effects
+
+/** A proc'd ability (lit up on the action bar): Hot Streak Pyroblast, Heating Up Fire Blast, Victory Rush, Execute.
+ *  While lit it ignores its own cooldown and, except Execute (which spends your rage by design), costs nothing. */
+export function procLit(u, sp, id, t) {
+  return !!((sp.instantWith && u.hasAura(sp.instantWith)) || (id === 'fireBlast' && u.hasAura('heatingUp')) || (id === 'victoryRush' && u.hasAura('victorious')) || (id === 'execute' && t && !t.dead && t.hpPct < 0.2));
+}
+const freeWhenLit = id => id !== 'execute';
 
 export class Combat {
   constructor(sim) {
@@ -35,9 +43,10 @@ export class Combat {
     if (caster.flag('stun')) return { ok: false, err: "Can't do that while stunned" };
     if (caster.flag('fear')) return { ok: false, err: "Can't do that while feared" };
     if (caster.casting) return { ok: false, err: 'Another action is in progress', silent: true };
-    if (caster.cdLeft(id) > 0) return { ok: false, err: 'Spell is not ready yet' };
+    const lit = procLit(caster, sp, id, target);
+    if (caster.cdLeft(id) > 0 && !lit) return { ok: false, err: 'Spell is not ready yet' };
     if (!sp.offGcd && caster.gcd > 0) return { ok: false, err: 'Spell is not ready yet', silent: true };
-    const cost = this.spellCost(caster, sp);
+    const cost = lit && freeWhenLit(id) ? 0 : this.spellCost(caster, sp);
     if (sp.requiresAura && !caster.hasAura(sp.requiresAura)) return { ok: false, err: 'You must have killed an enemy recently' };
     if (sp.powerType && caster.powerType === sp.powerType && caster.power < cost) return { ok: false, err: sp.powerType === 'rage' ? 'Not enough rage' : sp.powerType === 'energy' ? 'Not enough energy' : 'Not enough mana' };
     if (sp.target === 'enemy') {
@@ -69,12 +78,13 @@ export class Combat {
     const chk = this.canCast(caster, id, target, point);
     if (!chk.ok) { if (!chk.silent) bus.emit('error', { unit: caster, msg: chk.err }); return false; }
     const instant = !sp.cast && !sp.channel || (sp.instantWith && caster.hasAura(sp.instantWith));
+    const free = procLit(caster, sp, id, target) && freeWhenLit(id); // decided before the proc is used up
     if ((sp.target === 'enemy' || sp.target === 'ally') && !caster.moving) this.faceTarget(caster, target); // a running player keeps running where they were going
     caster.enterCombatIf = sp.target === 'enemy';
     if (!sp.offGcd) { caster.gcd = (sp.gcd ?? GCD) / (1 + caster.stats.haste / 100); caster.gcdMax = caster.gcd; }
     if (instant) {
       if (sp.instantWith && caster.hasAura(sp.instantWith)) caster.removeAura(sp.instantWith);
-      this.execute(caster, id, target, point);
+      this.execute(caster, id, target, point, { free });
     } else {
       const dur = (sp.cast || sp.channel) / (1 + caster.stats.haste / 100);
       caster.casting = { id, spell: sp, t: 0, dur, target, point, channel: !!sp.channel, ticks: sp.ticks || 0, tickT: 0, done: 0 };
@@ -98,9 +108,9 @@ export class Combat {
     bus.emit('cast_stop', { unit: u, spell: c.spell, id: c.id, reason });
   }
 
-  execute(caster, id, target, point) {
+  execute(caster, id, target, point, { free = false } = {}) {
     const sp = SPELLS[id];
-    if (!sp.channel) this.pay(caster, sp);
+    if (!sp.channel && !free) this.pay(caster, sp);
     if (sp.cd) caster.cooldowns.set(id, sp.cd);
     if (sp.target === 'enemy' && target) { this.engage(caster, target); }
     // special movement
@@ -221,6 +231,7 @@ export class Combat {
       } else if (o.spellId !== 'fireBlast') src.removeAura('heatingUp');
     }
     bus.emit('damage', { src, dst, amount: dealt, absorbed, school, crit, spell: o.spell, spellId: o.spellId, dot: !!o.dot, melee: !!o.melee, aoe: !!o.aoe });
+    if (src.procs && !o.dot && !o.proc) this.procs(src, dst, 'hit');
     if (dst.hp <= 0 && !this.duels?.yields(dst, src)) this.kill(dst, src); // a beaten duellist yields at 1 health
     return dealt;
   }
@@ -237,7 +248,17 @@ export class Combat {
     // healing threat on engaged mobs
     if (eff > 0 && (src.inCombat || dst.inCombat)) for (const m of this.sim.query(dst.pos, 40)) if (m.threat && m.hostile && m.threat.has(dst)) m.threat.set(src, (m.threat.get(src) || 0) + eff * 0.5);
     bus.emit('heal', { src, dst, amount: eff, over: h - eff, crit, spell: o.spell, spellId: o.spellId, hot: !!o.hot });
+    if (src.procs && !o.hot && !o.proc) this.procs(src, dst, 'heal');
     return eff;
+  }
+  /** Legendary effects: dragonfire on a hit, a second heal from the dawn. */
+  procs(src, dst, kind) {
+    for (const pr of src.procs) {
+      if (this.rng.next() >= pr.chance) continue;
+      const at = () => dst.pos.clone().setY(dst.pos.y + (dst.height || 1.8) * 0.6);
+      if (kind === 'hit' && pr.id === 'dragonfire') this.later(0.15, () => { if (dst.dead) return; bus.emit('fx', { name: 'fireImpact', pos: at(), scale: 1.5, color: 0xff7a18 }); this.damage(src, dst, pr.dmg, 'fire', { proc: true, noMiss: true, spell: PROC.dragonfire, spellId: 'dragonfire' }); });
+      if (kind === 'heal' && pr.id === 'dawnlight') this.later(0.25, () => { if (dst.dead) return; bus.emit('fx', { name: 'heal', pos: dst.pos.clone(), color: 0xffb040 }); this.heal(src, dst, pr.heal, { proc: true, spell: PROC.dawnlight, spellId: 'dawnlight' }); });
+    }
   }
 
   kill(dst, src) {

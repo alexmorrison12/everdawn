@@ -38,6 +38,8 @@ day, and so does the global race to kill it.
 - **Player to player.** Right-click anyone (friend or SimPlayer) to whisper, invite, inspect, trade, follow or
   challenge them to a duel. Groups work like WoW's: invite either way, promote, remove, leave, and a friend who
   refreshes keeps their slot. Middle-click the ground or a map to drop a waypoint your group sees as a beam of light.
+- **Legendaries.** Beyond the dragon's epics, a sliver of a chance at one orange item per class, each with an effect of
+  its own (dragonfire on hit, or a second heal from the dawn).
 - **The usual MMO furniture.** Spellbook (drag abilities onto your bar), quest log, a Social window, merchants who buy
   anything (right-click an item to sell it, with buyback), area loot with Auto Loot, and a Game Menu with Log Out.
 - **Real competition.**

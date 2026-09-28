@@ -237,7 +237,9 @@ export class GuestSession {
   lootWon(item) {
     if (!item) return;
     if (item.mount) this.g.hasMount = true; else this.g.addGear(item);
-    this.app.ui.alerts.raidWarning(`You won ${item.name}!`, '#a335ee');
+    const orange = item.rarity === 'legendary';
+    this.app.ui.alerts.raidWarning(`You won ${item.name}!`, orange ? '#ff8000' : '#a335ee');
+    bus.emit('sound', { name: orange ? 'legendary' : 'epicLoot' });
   }
 
   // ---------------------------------------------------------------- per frame

@@ -12,7 +12,7 @@ import { Hazards } from './hazards.js';
 import { AFFIXES, HAZARD_NAMES } from './daily.js';
 import { Lair, ELEMENTS } from '../../world/lair.js';
 import { createModel } from '../../models/factory.js';
-import { makeGear } from '../items.js';
+import { makeGear, makeLegendary, LEGENDARY_CHANCE } from '../items.js';
 import { bus } from '../events.js';
 import { RNG } from '../../core/noise.js';
 
@@ -285,6 +285,17 @@ export class RaidState {
     const classes = [...new Set(this.raiders.map(m => m.cls))];
     const clsFor = () => rng.next() < 0.45 ? this.player.cls : pick(rng, classes.filter(c => ['warrior', 'mage', 'priest'].includes(c)).concat(['warrior', 'mage', 'priest']));
     for (let i = 0; i < 3; i++) loot.push(makeGear(rng, clsFor(), 14, 'epic', pick(rng, ['weapon', 'chest', 'shoulders', 'head', 'legs', 'hands'])));
+    // something rarer than purple: one orange item, a few kills in a hundred (not the day's seeded rng: anyone can get lucky)
+    if (Math.random() < LEGENDARY_CHANCE || this.e.forceLegendary) {
+      const it = makeLegendary(clsFor()); loot.unshift(it);
+      this.combat.later(2.6, () => {
+        bus.emit('raid_warning', { text: `LEGENDARY! ${it.name}`, color: '#ff8000' });
+        bus.emit('sound', { name: 'legendary' });
+        bus.emit('fx', { name: 'lootBeam', pos: this.boss.pos.clone(), color: 0xff8000, scale: 1.6 });
+        const sims = this.raiders.filter(m => m.kind === 'sim');
+        ['OMG', 'IS THAT ORANGE', 'LEGENDARY???', 'no way', 'screenshot this', 'ive raided 400 times and never seen one'].forEach((t, i) => this.combat.later(0.6 + i * 0.7 + rng.next(), () => this.say(pick(rng, sims), t)));
+      });
+    }
     const mountRoll = rng.next() < 0.015;
     if (mountRoll) loot.push({ uid: 999999, mount: true, name: `Reins of the ${this.lair.E.name} Drake`, rarity: 'epic', icon: 'drakeReins', slot: 'mount' });
     const result = {
@@ -323,6 +334,11 @@ export class RaidState {
     this.social.post('loot', null, `${win.m === this.player ? 'You' : win.m.name} won: [${item.name}]`, { links: [{ name: item.name, rarity: item.rarity, item }] });
     if (win.m !== this.player && win.kind === 'need' && item.cls !== win.m.cls) this.combat.later(1.5, () => this.say(pick(rng, this.raiders.filter(x => x !== win.m && x.kind === 'sim')), pick(rng, ['NINJA', 'ninja looter!!', `${win.m.name} u cant even use that`, 'reported', 'wow'])));
     if (win.m === this.player) { if (item.mount) this.worldGame.hasMount = true; else this.worldGame.addGear(item); this.social.react('epic', 0.9); }
+    if (item.rarity === 'legendary') { // the realm hears about it
+      bus.emit('raid_warning', { text: `${win.m.name} receives ${item.name}!`, color: '#ff8000' });
+      const s = pick(rng, this.social.sims.filter(x => !x.dead));
+      if (s) this.combat.later(4, () => this.social.post('general', s, `did ${win.m.name} just get [${item.name}]?? gz`, { links: [{ name: item.name, rarity: item.rarity, item }] }));
+    }
     if (win.m.kind === 'remote') this.e.net?.giveLoot?.(win.m, item);
     return win;
   }

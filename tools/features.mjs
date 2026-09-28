@@ -41,6 +41,19 @@ await step('spellbook (P): abilities listed, click casts, drag places on the bar
   });
 });
 
+await step('a lit proc ignores its cooldown and costs nothing (Fire Blast + Heating Up, Pyroblast + Hot Streak)', () => ev(() => {
+  const A = __game, g = A.game, p = g.player, cb = g.combat, w = p.target;
+  p.level = 10; g.levelStats(p); p.power = p.powerMax; w.hpMax = w.hp = 1e7; // a sturdy dummy
+  p.gcd = 0; p.cooldowns.set('fireBlast', 6);
+  const blocked = cb.canCast(p, 'fireBlast', w).ok;
+  p.addAura('heatingUp', p);
+  const mana0 = p.power, lit = cb.canCast(p, 'fireBlast', w).ok, fb = cb.cast(p, 'fireBlast', w);
+  const fbFree = p.power === mana0;
+  p.removeAura('heatingUp'); p.addAura('hotStreak', p); p.gcd = 0;
+  const mana1 = p.power, pyro = cb.cast(p, 'pyroblast', w);
+  return { fireBlastOnCooldown: !blocked, litFireBlastCasts: lit && fb, fireBlastFree: fbFree, pyroInstant: pyro && !p.casting, pyroFree: p.power === mana1, hotStreakUsed: !p.hasAura('hotStreak') };
+}));
+
 await step('quest log (L): the quest shows; abandon removes it', async () => {
   await ev(() => { __game.ui.spellbook.close(); __game.game.acceptQuest('wolves'); });
   await page.keyboard.press('l');
