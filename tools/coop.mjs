@@ -11,7 +11,8 @@ const errs = [];
 const open = async (b, tag, u) => {
   const p = await b.newPage(); await p.setViewport({ width: 1280, height: 720 });
   p.on('pageerror', e => errs.push(`${tag} pageerror: ${e.message}`));
-  p.on('console', m => { if ((m.type() === 'error' || /\[net\]/.test(m.text())) && !/Failed to load resource/.test(m.text())) errs.push(`${tag}: ${m.text().slice(0, 300)}`); });
+  p.on('dialog', d => { console.log(`  (${tag}: "${d.type()}" dialog accepted)`); d.accept(); }); // the Leave-site warning
+  p.on('console', m => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) errs.push(`${tag}: ${m.text().slice(0, 300)}`); });
   await p.goto(u, { waitUntil: 'load' });
   await p.waitForFunction(() => window.__game && window.__game.mode === 'title', { timeout: 90000 });
   await p.evaluate(() => localStorage.clear());
@@ -72,7 +73,57 @@ await step('chat both ways', async () => {
   const g = await Gp.evaluate(() => [...document.querySelectorAll('.evd-chat .ln')].map(l => l.textContent).filter(t => /guest/.test(t)).slice(-2));
   return { host: h, guest: g };
 });
-if (!RAID) {
+if (process.argv.includes('--social')) {
+  await step('host sells an item to a SimPlayer', () => H.evaluate(async () => {
+    const A = __game, g = A.game, p = g.player, I = A.interact;
+    const s = g.social.sims.filter(x => !x.dead).sort((a, b) => a.pos.distanceTo(p.pos) - b.pos.distanceTo(p.pos))[0];
+    A.tp(s.pos.x + 2, s.pos.z + 2); await new Promise(r => setTimeout(r, 200));
+    g.addGear(g.premadeGear('mage').chest, false); const gold0 = p.gold, bag = p.bags.find(b => b.gear);
+    I.startTrade(s); I.trade.mine.items.push({ ref: bag }); I.changed();
+    for (let i = 0; i < 30 && !I.trade.okTheirs; i++) await new Promise(r => setTimeout(r, 200));
+    const offer = I.trade.theirs.gold; I.acceptTrade(); await new Promise(r => setTimeout(r, 200));
+    return { sim: s.name, offer, goldGained: p.gold - gold0, itemGone: !p.bags.includes(bag), tradeOpen: !!I.trade };
+  }));
+  await step('guest inspects the host', async () => {
+    await Gp.evaluate(() => { const A = __game, h = [...A.guest.units.values()].find(u => u.name === 'Hostia'); A.interact.inspect(h); });
+    await wait(1200);
+    return Gp.evaluate(() => document.querySelector('.evd-pinspect')?.textContent.slice(0, 90));
+  });
+  await step('guest and host trade a potion for gold', async () => {
+    await Gp.evaluate(() => { const A = __game; A.interact.closeWindow(); const h = [...A.guest.units.values()].find(u => u.name === 'Hostia'); A.game.player.pos.copy(h.pos).x += 2; A.interact.startTrade(h); });
+    await wait(1500);
+    const popup = await H.evaluate(() => { const b = [...document.querySelectorAll('.evd-popup button')].find(x => x.textContent === 'Trade'); b?.click(); return !!b; });
+    await wait(1500);
+    const g0 = await Gp.evaluate(() => { const A = __game, I = A.interact, p = A.game.player; const bag = p.bags.find(b => b.id === 'potionHealth'); I.trade.mine.items.push({ ref: bag }); I.changed(); return { gold: p.gold, pots: A.game.countItem('potionHealth') }; });
+    const h0 = await H.evaluate(() => { const A = __game, I = A.interact, p = A.game.player; p.gold += 20000; I.trade.mine.gold = 10000; I.changed(); return { gold: p.gold, pots: A.game.countItem('potionHealth') }; });
+    await wait(1500);
+    await Gp.evaluate(() => __game.interact.acceptTrade());
+    await H.evaluate(() => __game.interact.acceptTrade());
+    await wait(1500);
+    const g1 = await Gp.evaluate(() => ({ gold: __game.game.player.gold, pots: __game.game.countItem('potionHealth'), open: !!__game.interact.trade }));
+    const h1 = await H.evaluate(() => ({ gold: __game.game.player.gold, pots: __game.game.countItem('potionHealth'), open: !!__game.interact.trade }));
+    return { popup, guest: { goldDelta: g1.gold - g0.gold, potsDelta: g1.pots - g0.pots, open: g1.open }, host: { goldDelta: h1.gold - h0.gold, potsDelta: h1.pots - h0.pots, open: h1.open } };
+  });
+  await shot(H, 'host_social'); await shot(Gp, 'guest_social');
+} else if (process.argv.includes('--refresh')) {
+  await step('host refreshes; comes back to the same room; the guest reconnects', async () => {
+    const before = await H.evaluate(() => __game.net.code);
+    await H.reload({ waitUntil: 'load' });
+    await H.waitForFunction(() => window.__game && __game.mode === 'world' && __game.net?.code, { timeout: 120000 });
+    const after = await H.evaluate(() => ({ mode: __game.mode, code: __game.net.code, name: __game.game.player.name }));
+    for (let i = 0; i < 40; i++) { if (await H.evaluate(() => __game.net.proxies().length)) break; await wait(1000); }
+    await wait(2500);
+    const host = await H.evaluate(() => ({ proxies: __game.net.proxies().map(p => p.name) }));
+    const guest = await Gp.evaluate(() => ({ joined: __game.guest.joined, retrying: !!__game.guest.retrying, units: __game.guest.units.size, host: [...__game.guest.units.values()].some(u => u.name === 'Hostia') }));
+    return { before, after, host, guest };
+  });
+  await step('guest refreshes; rejoins by itself', async () => {
+    await Gp.reload({ waitUntil: 'load' });
+    for (let i = 0; i < 60; i++) { const ok = await Gp.evaluate(() => !!(window.__game && __game.guest?.myId && __game.mode === 'world')).catch(() => false); if (ok) break; await wait(1000); }
+    await wait(2500);
+    return { guest: await Gp.evaluate(() => ({ mode: __game.mode, name: __game.game.player?.name, units: __game.guest?.units.size })), host: await H.evaluate(() => __game.net.proxies().map(p => p.name)) };
+  });
+} else if (!RAID) {
   // bring a wolf to both players and let the guest kill it with fireballs
   // out past the village guards, so the kill is ours
   await H.evaluate(() => { const A = __game; A.tp(70, 125); });

@@ -97,7 +97,7 @@ export class UI {
     this.worldMap = new WorldMap(this, win);
     this.help = new HelpOverlay(this, win);
     this.loot = new LootWindow(this, win);
-    this.popups = new Popups(this, win);
+    this.popups = new Popups(this, this.modalLayer); // above screens too: the title's "Continue as…?" prompt must be visible
     // screens
     this.login = new LoginScreen(this, this.screenLayer);
     this.create = new CreateScreen(this, this.screenLayer);

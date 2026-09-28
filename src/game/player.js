@@ -49,6 +49,13 @@ export class PlayerController {
       this.camFollow = Math.abs(ang) < 0.35;
       walk = stickMag < 0.5 ? 0.5 : 1;
     }
+    // Follow (from the player menu): steer toward them until you move yourself or they get away
+    if (this.follow) {
+      const t = this.follow, dx = t.pos.x - u.pos.x, dz = t.pos.z - u.pos.z, d = Math.hypot(dx, dz);
+      const manual = f || s || turn || stickMag > 0.14 || steer;
+      if (manual || t.dead || d > 70 || !this.g.sim.units.includes(t)) { if (manual || d > 70) bus.emit('chat', { ch: 'system', text: `You stop following ${t.name}.` }); this.follow = null; }
+      else if (d > 3.2 && !stunned && !feared) { u.facing = Math.atan2(-dx, -dz); f = 1; }
+    }
     let speed = (f < 0 ? 4.6 : 7.2) * walk;
     speed *= u.mod('speed') * (u.swimming ? 0.62 : 1) * (this.mounted ? 1.6 : 1);
     if (feared) { f = 1; s = 0; if (!this.fearA || Math.random() < dt) this.fearA = Math.random() * Math.PI * 2; u.facing = this.fearA; }
@@ -184,7 +191,8 @@ export class PlayerController {
       const d = Math.hypot(o.pos.x - u.pos.x, o.pos.z - u.pos.z);
       if (o.dead && o.hostile) { if (d < 6) this.g.lootCorpse?.(o); else bus.emit('error', { unit: u, msg: 'You are too far away' }); return; }
       if (u.isEnemy(o)) { this.startAttack(); return; }
-      if (o.kind === 'npc' || o.kind === 'sim') { if (d < 7) this.g.interact?.(o); else bus.emit('error', { unit: u, msg: 'You are too far away' }); }
+      if (o.kind === 'sim' || o.kind === 'remote') { this.g.interact?.(o); return; } // the player menu opens at any range
+      if (o.kind === 'npc') { if (d < 7) this.g.interact?.(o); else bus.emit('error', { unit: u, msg: 'You are too far away' }); }
     }
   }
 }

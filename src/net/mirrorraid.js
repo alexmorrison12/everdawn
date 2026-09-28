@@ -33,7 +33,7 @@ export class MirrorRaid {
     ];
   }
   useItem(id) { if (id === 'hearthstone') return bus.emit('error', { unit: this.player, msg: "You can't do that here" }); this.e.game.useItem(id); }
-  interact() {}
+  interact(o) { if (o && (o.kind === 'sim' || o.kind === 'remote')) bus.emit('interact_sim', { unit: o }); }
   lootCorpse() {}
   addModel(u, spec) {
     u.model = createModel(spec);

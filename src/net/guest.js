@@ -21,31 +21,52 @@ export class GuestSession {
   constructor(app, code, { onOpen, onError } = {}) {
     this.app = app; this.code = code;
     this.units = new Map(); this.myId = null; this.hostId = null; this.hostName = 'your friend';
-    this.sendT = 0; this.statsSig = ''; this.joined = false;
-    this.net = new GuestTransport(code, app.game.player?.name || 'Adventurer', {
-      onOpen: () => onOpen?.(),
+    this.sendT = 0; this.statsSig = ''; this.joined = false; this.retries = 0;
+    this.first = { onOpen, onError };
+    this.connect();
+    this.resolve = id => (id === this.myId ? this.p : this.units.get(id));
+  }
+  connect() {
+    this.net?.close();
+    this.net = new GuestTransport(this.code, this.p?.name || 'Adventurer', {
+      onOpen: () => {
+        if (!this.joined) { this.first.onOpen?.(); return; }
+        // back after a drop (the host refreshed, a flaky network): say hello again and get a fresh copy of the world
+        this.retries = 0; this.helloSent = false; this.hello();
+        this.app.ui.alerts.raidWarning(`Reconnected to ${this.hostName}'s world`, '#40ff80');
+        this.app.guestBadge?.set(`In ${this.hostName}'s world`);
+      },
       onMessage: m => this.onMessage(m),
       onClose: reason => this.lost(reason),
-      onError: msg => { if (!this.joined) onError?.(msg); else app.ui.alerts.error(msg); },
+      onError: msg => { if (!this.joined) this.first.onError?.(msg); else if (this.retrying) this.retry(); else this.app.ui.alerts.error(msg); },
     });
-    this.resolve = id => (id === this.myId ? this.p : this.units.get(id));
+  }
+  // keep knocking on the same room for two minutes: a refreshed host reopens it with the same code
+  retry() {
+    clearTimeout(this.retryT);
+    if (this.retries++ > 40) { this.retrying = false; this.app.guestBadge?.set('Disconnected'); bus.emit('chat', { ch: 'system', text: `${this.hostName}'s world didn't come back. Reload the page to play on your own or join again.` }); return; }
+    this.retryT = setTimeout(() => this.connect(), 3000);
   }
   get g() { return this.app.game; }
   get p() { return this.g.player; }
   get raid() { return this.app.mode === 'raid' ? this.app.raid : null; }
 
-  lost(reason) {
-    this.app.ui.alerts.raidWarning(`${reason || 'Disconnected.'} Your character is saved.`, '#ff6040');
-    bus.emit('chat', { ch: 'system', text: `Disconnected from ${this.hostName}'s world. Reload the page to play on your own or join again.` });
+  lost() {
+    if (this.closed || this.retrying) { if (this.retrying) this.retry(); return; }
+    this.retrying = true; this.retries = 0;
+    this.app.ui.alerts.raidWarning(`Lost ${this.hostName}'s world. Reconnecting…`, '#ffb040');
+    bus.emit('chat', { ch: 'system', text: `Lost the connection to ${this.hostName}'s world (did they refresh?). Your character is saved; reconnecting for the next two minutes.` });
     this.clearUnits();
     this.app.guestLost?.();
+    if (this.app.mode === 'raid') this.app.guestRaidLeave?.();
+    this.retry();
   }
 
   // ---------------------------------------------------------------- messages from the host
   onMessage(m) {
     switch (m.t) {
       case 'hi': this.hostName = m.host || this.hostName; this.hello(); return;
-      case 'welcome': this.welcomed(m); return;
+      case 'welcome': this.retrying = false; this.welcomed(m); return;
       case 's': this.snapshot(m); return;
       case 'e': for (const [type, data] of m.l) this.event(type, data); return;
       case 'force': this.force(m); return;
@@ -53,6 +74,8 @@ export class GuestSession {
       case 'raid_end': this.app.guestRaidLeave?.(m); return;
       case 'raid_result': this.app.guestRaidResult?.(m); return;
       case 'loot_won': this.lootWon(m.item); return;
+      case 'inspect': this.app.interact?.showInspect(m.data); return;
+      case 'trade': this.app.interact?.onTrade(this.resolve(m.from), m.m); return;
       case 'full': this.app.ui.alerts.error('That world is full (4 friends max).'); return;
     }
   }
@@ -278,5 +301,5 @@ export class GuestSession {
     };
     this.offChat = bus.on('chat', e => { if (e.$net && e.ch === 'whisper' && e.from) self.lastWhisper = e.from; });
   }
-  dispose() { this.net.close(); this.clearUnits(); this.offChat?.(); }
+  dispose() { this.closed = true; clearTimeout(this.retryT); this.net?.close(); this.clearUnits(); this.offChat?.(); }
 }

@@ -24,23 +24,39 @@ const CHAT_NEAR = { say: 45, emote: 45, yell: 160 };
 const CHAT_ALL = new Set(['general', 'trade', 'lfg', 'localdefense', 'party', 'raid', 'rw', 'loot']);
 
 export class HostSession {
-  constructor(app) {
+  constructor(app, code = null) {
     this.app = app; this.code = null;
     this.guests = new Map();       // relay id → { id, name, proxy, known: Map(unitId → row signature), out: [], snapT }
     this.byProxy = new Map();      // proxy unit → guest
     this.acc = 0; this.todT = 0;
     this.net = new HostTransport({
-      onOpen: code => { this.code = code; this.badge.render(); bus.emit('chat', { ch: 'system', text: `Your world is open. Room code: ${code}. Share the invite link from the badge in the corner.` }); },
+      onOpen: code => {
+        const again = code === this.wanted;
+        this.code = code; this.badge.note = null; this.badge.render();
+        app.rememberSession?.({ role: 'host', code });
+        bus.emit('chat', { ch: 'system', text: again ? `Your world is open again: room ${code}. Friends reconnect on their own.` : `Your world is open. Room code: ${code}. Share the invite link from the badge at the top.` });
+      },
+      onWait: c => { this.badge.note = `Reopening room ${c}…`; this.badge.render(); },
       onJoin: (id, name) => this.join(id, name),
       onLeave: id => this.leave(id),
       onMessage: (id, m) => { const gst = this.guests.get(id); if (gst) this.onGuest(gst, m); },
       onError: msg => { this.badge.note = msg; this.badge.render(); this.app.ui.alerts.error(msg); },
-    });
+    }, code);
+    this.wanted = code;
     // tap the bus: after local listeners run, relay what guests need
     const emit = bus.emit;
     this.untap = () => { bus.emit = emit; };
     bus.emit = (type, data) => { emit.call(bus, type, data); if (this.guests.size) { try { this.onEvent(type, data); } catch (e) { console.warn('[host]', type, e); } } };
     this.badge = new HostBadge(app, this);
+    // your whispers to a friend go to their browser
+    const soc = app.game.social, playerChat = soc.playerChat.bind(soc);
+    soc.playerChat = (raw, ch) => {
+      const m = /^\/(?:w|whisper|t|tell|msg)\s+(\S+)\s+([\s\S]+)/i.exec(String(raw || '').trim());
+      const gst = m && [...this.guests.values()].find(g => g.proxy && g.proxy.name.toLowerCase() === m[1].toLowerCase());
+      if (!gst) return playerChat(raw, ch);
+      bus.emit('chat', { ch: 'whisper_out', from: this.me.name, to: gst.proxy.name, text: m[2] });
+      this.queue(gst, 'chat', { ch: 'whisper', from: this.me.name, cls: this.me.cls, text: m[2].slice(0, 240), to: 'you' });
+    };
   }
   get g() { return this.app.game; }
   get raiding() { return this.app.mode === 'raid' && this.app.raid; }
@@ -89,6 +105,14 @@ export class HostSession {
       case 'chat': this.chat(gst, m); return;
       case 'emote': if (p && !p.dead) { p.model?.play?.(m.anim); if (m.text) this.g.social.post('emote', null, `${p.name} ${m.text}`, { unit: p, $from: gst.id }); } return;
       case 'bye': this.leave(gst.id); return;
+      case 'inspect': { const u = this.unit(m.id); if (u && this.app.interact) this.send(gst, { t: 'inspect', data: this.app.interact.inspectData(u) }); return; }
+      case 'trade': {
+        if (!p) return;
+        if (m.to === this.me?.id) { this.app.interact?.onTrade(p, m.m); return; }
+        const other = [...this.guests.values()].find(o => o.proxy && o.proxy.id === m.to);
+        if (other) this.send(other, { t: 'trade', from: p.id, m: m.m });
+        return;
+      }
     }
   }
   get combat() { return this.raiding ? this.app.raid.combat : this.g.combat; }

@@ -140,7 +140,7 @@ export class RaidState {
 
   say(u, text, ch = 'raid') { this.social.post(ch, u, text); }
   useItem(id) { if (id === 'hearthstone') return bus.emit('error', { unit: this.player, msg: "You can't do that here" }); this.worldGame.useItem(id); }
-  interact() {}
+  interact(o) { if (o && (o.kind === 'sim' || o.kind === 'remote')) bus.emit('interact_sim', { unit: o }); }
   lootCorpse() {}
   at(t, fn) { this.script.push({ t: this.scriptT + t, fn }); }
 

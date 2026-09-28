@@ -16,6 +16,7 @@ import { GuestSession } from './net/guest.js';
 import { MirrorRaid } from './net/mirrorraid.js';
 import { openLobby, GuestBadge } from './net/lobby.js';
 import { canNetwork } from './net/peer.js';
+import { Interactions } from './game/interact.js';
 import { dailyDragon, AFFIXES } from './game/raid/daily.js';
 import { CinematicCam, TITLE_PATH, STAGE } from './game/cinematic.js';
 import { FX } from './fx/fx.js';
@@ -101,6 +102,7 @@ class App {
     this.hud = new HUD(this);
     this.ui = this.hud.ui;
     this.touch.onChat = () => this.ui.chat.open();
+    this.interact = new Interactions(this); // player menu: whisper, invite, inspect, trade, follow
     this.ui.create.counts = appearanceCounts; // creation-screen options match each race's real palettes
     this.cine = new CinematicCam(this.camera);
     this.wireScreens();
@@ -115,7 +117,11 @@ class App {
     this.manual = false;
     const boot = document.getElementById('boot');
     boot.style.opacity = 0; setTimeout(() => boot.remove(), 900);
-    if (params.get('cls')) this.quickStart(); else this.showTitle();
+    // an accidental refresh or Back while hosting/joined: straight back into the same world (see rememberSession)
+    const sess = this.readSession(), resumeCh = sess?.char && store.load().chars[sess.char];
+    if (params.get('cls')) this.quickStart(); else if (resumeCh) this.resumeSession(sess, resumeCh); else this.showTitle();
+    addEventListener('pagehide', () => this.save());
+    addEventListener('beforeunload', e => { if ((this.net && [...this.net.guests.values()].some(g => g.proxy)) || this.guest?.joined) { e.preventDefault(); e.returnValue = ''; } });
     const loop = () => { requestAnimationFrame(loop); if (!this.manual) this.frame(); };
     loop();
     setInterval(() => this.save(), 20000);
@@ -215,12 +221,12 @@ class App {
     const saved = () => { const db = store.load(); return db.last && db.chars[db.last]; };
     ui.on('login:enter', () => {
       const ch = saved();
-      if (ch) ui.popups.show({ text: `Continue as **${ch.name}**, level ${ch.level} ${ch.race} ${ch.cls}?`, accept: 'Continue', decline: 'New Character', onAccept: () => this.startWorld(ch), onDecline: () => this.showCreate(false) });
+      if (ch) ui.popups.show({ id: 'title', text: `Continue as **${ch.name}**, level ${ch.level} ${ch.race} ${ch.cls}?`, accept: 'Continue', decline: 'New Character', onAccept: () => this.startWorld(ch), onDecline: () => this.showCreate(false) });
       else this.showCreate(false);
     });
     ui.on('login:raid', () => {
       const ch = saved();
-      if (ch && ch.level >= 10) ui.popups.show({ text: `Raid tonight as **${ch.name}** (level 10 ${ch.cls})?`, accept: 'Raid', decline: 'New Character', onAccept: () => this.startWorld(ch, true), onDecline: () => this.showCreate(true) });
+      if (ch && ch.level >= 10) ui.popups.show({ id: 'title', text: `Raid tonight as **${ch.name}** (level 10 ${ch.cls})?`, accept: 'Raid', decline: 'New Character', onAccept: () => this.startWorld(ch, true), onDecline: () => this.showCreate(true) });
       else this.showCreate(true);
     });
     ui.on('login:watch', () => this.watchRaid());
@@ -236,6 +242,7 @@ class App {
   }
 
   showCreate(jump) {
+    this.ui.popups.close('title');
     this.mode = 'create'; this.jumpMode = jump;
     this.ui.screen('create');
     this.world.cycle = false; this.world.setTime(0.63);
@@ -265,6 +272,7 @@ class App {
 
   startWorld(ch, toRaid = false) {
     const g = this.game;
+    this.ui.popups.close('title'); // a title prompt left open must not restart the character later
     if (g.player) { g.sim.remove(g.player); g.player = null; }
     const p = g.createPlayer(ch);
     if (ch.jump && !ch.equip) Object.assign(p.equip, g.premadeGear(p.cls));
@@ -283,7 +291,8 @@ class App {
     this.music('vale');
     const vs = readChallenge();
     if (vs && !this.watching) setTimeout(() => this.ui.alerts.raidWarning(`${vs.name} challenges you: ${vs.value.toLocaleString()} ${vs.role === 'heal' ? 'HPS' : 'DPS'} in ${fmtTime(vs.killTime)}. Beat it.`, '#ffd040'), 3000);
-    if (this.hostWanted) { this.hostWanted = false; this.startHosting(); }
+    if (this.hostWanted) { this.hostWanted = false; this.startHosting(this.hostCode); }
+    if (this.guest) this.rememberSession({ char: p.name });
     if (this.guest && !this.guest.hooked) { this.guest.hooked = true; this.guest.hook(); this.guest.hello(); this.guestBadge = new GuestBadge(this.guest.hostName); return; }
     if (toRaid) setTimeout(() => this.enterRaid(), 300);
   }
@@ -291,23 +300,35 @@ class App {
   // ------------------------------------------------------------------ play together (net/)
   // One player hosts (their browser simulates the realm), friends join with a six-letter room code. Browsers talk
   // directly over WebRTC; the raid, quests and SimPlayers are shared, characters stay in each player's own browser.
+  /** Per tab, so a refresh or Back/Forward can put you back where you were (a new tab starts fresh). */
+  rememberSession(s) { try { const cur = this.readSession() || {}; sessionStorage.setItem('everdawn.session', JSON.stringify({ ...cur, ...s, char: s.char ?? this.game.player?.name ?? cur.char })); } catch { /* storage blocked */ } }
+  readSession() { try { return JSON.parse(sessionStorage.getItem('everdawn.session') || 'null'); } catch { return null; } }
+  forgetSession() { try { sessionStorage.removeItem('everdawn.session'); } catch { /* */ } }
+  resumeSession(sess, ch) {
+    if (sess.role === 'host') { this.hostCode = sess.code; this.hostWanted = true; this.startWorld(ch); return; }
+    this.showTitle();
+    this.ui.alerts.info(`Rejoining room ${sess.code}…`);
+    this.joinFriend(sess.code, { ok: () => {}, fail: msg => { this.forgetSession(); this.ui.alerts.error(msg); this.showTitle(); } }, ch);
+  }
   openTogether(code) {
     if (this.mode !== 'title' || this.guest) return;
     openLobby({ code, publicUrl: PUBLIC_URL, onHost: () => { this.hostWanted = true; this.ui.emit('login:enter'); }, onJoin: (c, st) => this.joinFriend(c, st) });
   }
-  joinFriend(code, st) {
+  joinFriend(code, st, ch = null) {
     const s = new GuestSession(this, code, {
       onOpen: () => {
         st.ok(); this.guest = s; this.game.becomeMirror();
+        this.rememberSession({ role: 'guest', code, char: ch?.name ?? null });
+        if (ch) { this.startWorld(ch); return; }
         this.ui.alerts.info('Connected! Choose your character.');
         this.ui.emit('login:enter');
       },
       onError: msg => { s.dispose(); if (this.guest === s) this.guest = null; st.fail(msg); },
     });
   }
-  startHosting() {
+  startHosting(code = null) {
     if (this.net || this.guest || !canNetwork() || !this.game.player) return false;
-    this.net = new HostSession(this);
+    this.net = new HostSession(this, code);
     return true;
   }
   guestRaidEnter(m) {

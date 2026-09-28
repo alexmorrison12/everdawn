@@ -41,18 +41,30 @@ const OPTS = { debug: 0, config: { iceServers: [
   { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
 ] } };
 
-/** Hosting: open the room and accept guests. cb: onOpen(code), onJoin(id, name), onLeave(id), onMessage(id, msg), onError(msg). */
+/** Hosting: open the room and accept guests. cb: onOpen(code), onJoin(id, name), onLeave(id), onMessage(id, msg), onError(msg).
+ *  A preferred code (the same tab after a refresh) is retried for a while: the matchmaking service frees the old
+ *  page's id a few seconds after it disconnects, and friends are already trying that code to get back in. */
 export class HostTransport {
-  constructor(cb, code = makeCode(), tries = 0) {
-    this.cb = cb; this.code = code; this.conns = new Map(); this.nextId = 1; this.closed = false;
+  constructor(cb, code = null) {
+    this.cb = cb; this.conns = new Map(); this.nextId = 1; this.closed = false; this.tries = 0;
+    this.open(code || makeCode(), !!code);
+  }
+  open(code, preferred) {
+    this.code = code;
     const peer = this.peer = new Peer(PREFIX + code, OPTS);
-    peer.on('open', () => cb.onOpen?.(code));
+    peer.on('open', () => this.cb.onOpen?.(code));
     peer.on('connection', conn => this.accept(conn));
-    peer.on('disconnected', () => { if (!this.closed) setTimeout(() => { try { peer.reconnect(); } catch { /* destroyed */ } }, 1500); });
+    peer.on('disconnected', () => { if (!this.closed && peer === this.peer) setTimeout(() => { try { peer.reconnect(); } catch { /* destroyed */ } }, 1500); });
     peer.on('error', err => {
-      if (err.type === 'unavailable-id' && tries < 4) { peer.destroy(); Object.assign(this, new HostTransport(cb, makeCode(), tries + 1)); return; }
-      if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') cb.onError?.('Could not reach the matchmaking service. Check your connection.');
-      else if (err.type !== 'peer-unavailable') cb.onError?.(err.message || String(err.type));
+      if (peer !== this.peer) return;
+      if (err.type === 'unavailable-id') {
+        peer.destroy();
+        if (preferred && this.tries++ < 12) { this.cb.onWait?.(code); setTimeout(() => { if (!this.closed) this.open(code, true); }, 2500); }
+        else if (this.tries++ < 16) this.open(makeCode(), false);
+        return;
+      }
+      if (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error') this.cb.onError?.('Could not reach the matchmaking service. Check your connection.');
+      else if (err.type !== 'peer-unavailable') this.cb.onError?.(err.message || String(err.type));
     });
   }
   accept(conn) {
