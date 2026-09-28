@@ -10,7 +10,7 @@ export const NPCS = {
     greet: 'Careful! That one explodes. No, the other one. Actually, both.' },
   hollis: { name: 'Farmer Hollis', title: null, race: 'human', sex: 'm', outfit: 'farmer', pos: [-146, 109], face: [-150, 100],
     greet: 'Them boars have eaten half my turnips and all of my patience.' },
-  gil: { name: 'Fisherman Gil', title: null, race: 'human', sex: 'm', outfit: 'villager', pos: [-47, 22], face: [-55, 10],
+  gil: { name: 'Fisherman Gil', title: null, race: 'human', sex: 'm', outfit: 'villager', pos: [-47, 22], face: [-55, 10], vendor: ['fishingPole'],
     greet: 'Fish aren\'t biting. Something\'s biting, though. Mostly my nets.' },
   brask: { name: 'Foreman Brask', title: 'Candlerock Mining Co.', race: 'dwarf', sex: 'm', outfit: 'villager', pos: [-148, -24], face: [-165, -90],
     greet: 'Forty years I worked that mine. Forty! And now the kobolds think they own it.' },
@@ -19,6 +19,8 @@ export const NPCS = {
   guard1: { name: 'Dawnhollow Guard', race: 'human', sex: 'm', outfit: 'guard', pos: [16, 108], face: [14, 80], guard: true },
   guard2: { name: 'Dawnhollow Guard', race: 'dwarf', sex: 'm', outfit: 'guard', pos: [-32, 143], face: [-60, 135], guard: true },
   guard3: { name: 'Dawnhollow Guard', race: 'human', sex: 'f', outfit: 'guard', pos: [52, 144], face: [80, 130], guard: true },
+  quartermaster: { name: 'Quartermaster Brannoc', title: 'Ember Maw Commendations', race: 'dwarf', sex: 'm', outfit: 'guard', pos: [28, 116], face: [14, 104], vendor: 'marks',
+    greet: 'Back from the Maw with scorch marks on your boots? Good. The realm pays in Ember Marks for every dragon you put down, and I trade in nothing else. Pre-raid gear, a tonic or two, and a few toys for the victorious.' },
   smith: { name: 'Blacksmith Hargan', title: 'Weapons & Armor', race: 'orc', sex: 'm', outfit: 'villager', pos: [34, 168], face: [10, 150], vendor: 'gear',
     greet: 'You break it, I fix it. You break it again, I charge double.' },
 };

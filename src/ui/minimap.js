@@ -18,7 +18,8 @@ export class Minimap {
     const mk = (cls, glyph, tip, ev) => { const b = h('button', 'evd-iconbtn mmb ' + cls, wrap); h('img', '', b).src = glyphURL(glyph); b._tip = () => ({ type: 'text', title: tip }); if (ev) b.addEventListener('click', ev); return b; };
     this.zin = mk('zin', 'plus', 'Zoom In', () => ui.emit('minimapZoom', 1));
     this.zout = mk('zout', 'minus', 'Zoom Out', () => ui.emit('minimapZoom', -1));
-    this.track = mk('track', 'track', 'Tracking: Find Herbs', () => ui.emit('minimapTracking'));
+    this.track = mk('track', 'track', 'Tracking: none', () => ui.emit('minimapTracking'));
+    this.trackLabel = 'none'; this.track._tip = () => ({ type: 'text', title: `Tracking: ${this.trackLabel}`, lines: ['Click to switch between Find Minerals, Find Herbs and nothing.'] });
     this.mail = mk('mail', 'mail', 'You have unread mail', () => ui.emit('minimapMail'));
     this.dayw = h('div', 'day', wrap); this.sun = h('i', 'sun', this.dayw);
     this.clock = h('div', 'clock', el);

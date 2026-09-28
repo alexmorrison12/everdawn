@@ -5,7 +5,7 @@
 .evd-win-spellbook { width: 440px; }
 .evd-win-quests { width: 640px; height: 560px; }
 .evd-win-social { width: 520px; }
-.evd-win-merchant { width: 420px; }
+.evd-win-merchant { width: 540px; }
 .evd-win-spellbook .bsub, .evd-win-social .bsub { text-align: center; margin: 0 0 10px; font: 600 14px/1.3 var(--font); color: #e8dcc0; text-shadow: var(--ol); }
 .bhint { flex: none; margin-top: 10px; font: 500 12px/1.35 var(--font); color: #a89c80; text-align: center; text-shadow: var(--ol); }
 
@@ -84,3 +84,42 @@
 .evd-wpl span { font: 600 12px/1.2 var(--font, sans-serif); color: #fff; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
 .evd-win-map .mm.wp { transform: translate(-50%, -100%); }
 .evd-win-map .mm.wp i { display: block; width: 14px; height: 22px; background: var(--c, #ffd35a); clip-path: polygon(50% 100%, 0 35%, 15% 8%, 50% 0, 85% 8%, 100% 35%); filter: drop-shadow(0 0 2px #000); }
+
+/* professions */
+.evd-win-professions { left: 56px; top: 104px; width: 720px; height: 560px; max-height: calc(100% - 250px); padding: 30px 16px 14px; display: flex; flex-direction: column; }
+.evd-win-professions .pfbody { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+.evd-win-professions .pflist { overflow-y: auto; display: flex; flex-direction: column; gap: 5px; }
+.evd-win-professions .pfrow { display: flex; align-items: center; gap: 8px; padding: 5px; border-radius: 4px; background: rgba(0,0,0,.25); box-shadow: inset 0 0 0 1px rgba(255,210,120,.12); }
+.evd-win-professions .pfrow.sel { background: rgba(255,210,90,.18); box-shadow: inset 0 0 0 1px rgba(255,210,90,.5); }
+.evd-win-professions .pfic { width: 36px; height: 36px; border-radius: 4px; box-shadow: 0 0 0 1px #000; }
+.evd-win-professions .pft { flex: 1; }
+.evd-win-professions .pfn { font: 700 14px/1.2 var(--font); color: #fff; text-shadow: var(--ol); }
+.evd-win-professions .pfbar { position: relative; height: 14px; margin-top: 3px; border-radius: 3px; background: #120c06; box-shadow: 0 0 0 1px #000, inset 0 0 0 1px #5a4424; overflow: hidden; }
+.evd-win-professions .pfbar i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(180deg, #7ad060, #2a7a1a); }
+.evd-win-professions .pfbar span { position: relative; display: block; text-align: center; font: 700 10px/14px var(--font); color: #fff; text-shadow: var(--ol); }
+.evd-win-professions .pfpage { overflow-y: auto; padding: 4px 6px; }
+.evd-win-professions .pfhd { display: flex; align-items: center; gap: 10px; font: 700 18px var(--serif); color: var(--gold); text-shadow: var(--ol); }
+.evd-win-professions .pfhd img { width: 40px; height: 40px; border-radius: 4px; box-shadow: 0 0 0 1px #000, 0 0 0 2px #8a6a2a; }
+.evd-win-professions .pftip { margin: 8px 0; font: 500 13px/1.45 var(--font); color: #e0d4b8; text-shadow: var(--ol); }
+.evd-win-professions .pftool { font: 600 13px/1.3 var(--font); color: #40e070; text-shadow: var(--ol); }
+.evd-win-professions .pftool.none { color: #ff6050; }
+.evd-win-professions .pfab { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
+.evd-win-professions .pfab .evd-slot { width: 44px; height: 44px; cursor: grab; }
+.evd-win-professions .pfdrag { font: 500 12px var(--font); color: #a89c80; }
+.evd-win-professions .pfh { margin: 12px 0 6px; padding-bottom: 3px; border-bottom: 1px solid rgba(255,210,120,.3); font: 700 14px/1 var(--serif); letter-spacing: .05em; color: var(--gold); text-shadow: var(--ol); }
+.evd-win-professions .pfrec { display: flex; align-items: center; gap: 9px; padding: 5px; margin-bottom: 4px; border-radius: 4px; background: rgba(0,0,0,.22); }
+.evd-win-professions .pfrec .evd-slot { width: 40px; height: 40px; }
+.evd-win-professions .pfrt { flex: 1; min-width: 0; }
+.evd-win-professions .pfrn { font: 700 14px/1.2 var(--font); text-shadow: var(--ol); }
+.evd-win-professions .c-orange .pfrn { color: #ff8040; } .evd-win-professions .c-yellow .pfrn { color: #ffff00; }
+.evd-win-professions .c-green .pfrn { color: #40c040; } .evd-win-professions .c-grey .pfrn { color: #9a9a9a; } .evd-win-professions .c-red .pfrn { color: #c04040; }
+.evd-win-professions .pfneed { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 3px; }
+.evd-win-professions .pfr { display: inline-flex; align-items: center; gap: 4px; font: 600 12px var(--font); color: #e0d4b8; text-shadow: var(--ol); }
+.evd-win-professions .pfr.short { color: #ff6050; }
+.evd-win-professions .pfr img { width: 18px; height: 18px; border-radius: 2px; }
+.evd-win-professions .pfwhere { font: 500 11.5px var(--font); color: #a89c80; }
+.evd-win-professions .evd-btn.small { min-width: 0; padding: 0 9px; }
+/* ember marks */
+.mmk { display: inline-flex; align-items: center; gap: 4px; font: 700 13px var(--font); color: #ffb060; text-shadow: var(--ol); margin-left: 8px; }
+.mmk img, .evd-win-bags .bmarks img { width: 16px; height: 16px; border-radius: 3px; }
+.evd-win-bags .bmarks { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 6px; font: 700 12px var(--font); color: #ffb060; text-shadow: var(--ol); }

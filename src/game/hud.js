@@ -12,6 +12,9 @@ import { drawMinimap, drawLairMinimap, areaAt, bakeWorldMap } from './map.js';
 import { Portraits } from './portrait.js';
 import { fmtMoney } from './game.js';
 import { procLit } from './combat.js';
+import { estimate } from './estimate.js';
+
+const UIGEAR = new WeakMap(); // UI item → the game's gear piece (for DPS comparisons in tooltips)
 
 const _v = new THREE.Vector3();
 const CH_MAP = { whisper: 'whisperIn', whisper_out: 'whisperOut', localdefense: 'general', raid: 'raid', rw: 'raidWarning' };
@@ -27,6 +30,7 @@ export function uiItem(it, id) {
   const o = { id: id || it.uid, name: it.name, icon: it.icon || 'unknown', rarity: it.rarity || 'common', flavor: it.flavor, sell: it.sell ? it.sell * 25 : undefined };
   if (it.quest) { o.questItem = true; o.bind = 'pickup'; }
   if (it.gear) {
+    UIGEAR.set(o, it);
     o.bind = it.rarity === 'epic' || it.rarity === 'legendary' ? 'pickup' : 'equip';
     if (it.unique) o.unique = true;
     if (it.proc && it.proc.id !== 'dawnlight') o.chance = [procText(it.proc)];
@@ -94,6 +98,24 @@ export class HUD {
       if (b.gear) this.game.equip(b.gear); else this.game.useItem(b.id); this.bagsDirty = this.charDirty = true;
     });
     ui.on('spellbookCast', id => this.g.pc?.castSpell(id));
+    ui.on('profUse', id => this.g.pc?.castSpell(id));
+    ui.on('craft', (id, n) => { this.e.prof?.craft(id, n); this.profDirty = true; });
+    ui.on('minimapTracking', () => { const order = [null, 'mining', 'herbalism']; this.tracking = order[(order.indexOf(this.tracking ?? null) + 1) % order.length]; ui.minimap.trackLabel = this.tracking === 'mining' ? 'Find Minerals' : this.tracking === 'herbalism' ? 'Find Herbs' : 'none'; ui.alerts.info(`Tracking: ${ui.minimap.trackLabel}`); });
+    ui.on('bagMove', (i, j) => {
+      const bags = this.game.player.bags, a = bags[i]; if (!a) return;
+      const b = bags[j];
+      if (b && !a.gear && !b.gear && a.id === b.id && ITEMS[a.id]?.stack) { b.count += a.count; bags.splice(i, 1); } // same stack: merge
+      else if (b) { bags[i] = b; bags[j] = a; }
+      else { bags.splice(i, 1); bags.push(a); }
+      this.bagsDirty = true;
+    });
+    ui.on('barItem', (j, i) => { const b = this.game.player.bags[i], def = b && !b.gear && ITEMS[b.id]; if (!def?.use) { ui.alerts.error('Only usable items go on the action bar.'); return; } this.editBar(pc => { pc.bar[j] = 'item:' + b.id; }); });
+    ui.on('bagSell', i => { if (ui.merchant.isOpen) this.game.sellItem(i); else ui.alerts.error('Talk to a merchant to sell.'); });
+    ui.on('bagDestroy', i => {
+      const b = this.game.player.bags[i]; if (!b) return;
+      const it = b.gear || ITEMS[b.id], n = b.count > 1 ? ` (${b.count})` : '';
+      ui.popups.show({ id: 'destroy', text: `Do you want to destroy **${it.name}**${n}?`, accept: 'Yes', decline: 'No', onAccept: () => { if (this.game.player.bags[i] === b) this.game.destroyItem(i); } });
+    });
     ui.on('barPlace', (i, id) => this.editBar(pc => { const j = pc.bar.indexOf(id), prev = pc.bar[i]; pc.bar[i] = id; if (j >= 0 && j !== i) pc.bar[j] = prev; }));
     ui.on('barMove', (i, j) => this.editBar(pc => { const id = pc.bar[i]; if (j < 0 || j >= 10) pc.bar[i] = null; else { pc.bar[i] = pc.bar[j]; pc.bar[j] = id; } }));
     ui.on('questAbandon', id => { const q = QUEST[id]; if (q) ui.popups.confirm(`Abandon **${q.title}**?`, ok => { if (ok) this.game.abandonQuest(id); }, 'Abandon', 'Keep'); });
@@ -115,6 +137,14 @@ export class HUD {
     ui.on('meterMode', m => { this.meterMode = m; });
     ui.on('minimapZoom', d => { this.mmRadius = Math.max(50, Math.min(160, (this.mmRadius || 90) * (d > 0 ? 0.8 : 1.25))); });
     ui.on('questClick', () => ui.toggle('map'));
+    // item tooltips: what wearing this would do to your estimated DPS (and HPS for healers)
+    ui.itemExtra = uiIt => {
+      const g = UIGEAR.get(uiIt), p = this.game.player;
+      if (!g || !p || g.cls !== p.cls || p.equip[g.slot] === g) return null;
+      const cur = estimate(this.game, p), next = estimate(this.game, p, { [g.slot]: g });
+      const line = (label, a, b) => { const d = b - a; return { text: `If equipped: ${label} ${d >= 0 ? '+' : ''}${d.toFixed(1)}  (${a.toFixed(1)} → ${b.toFixed(1)})`, color: d > 0.05 ? '#1eff00' : d < -0.05 ? '#ff4040' : '#ffd100' }; };
+      return cur.hps != null ? [line('HPS', cur.hps, next.hps), line('DPS', cur.dps, next.dps)] : [line('DPS', cur.dps, next.dps)];
+    };
     this.mmRadius = 90;
 
     // ------------------------------------------------------------------ game → UI
@@ -174,7 +204,9 @@ export class HUD {
     on('duel_state', d => this.duelState(d));
     on('party_changed', () => { this.socialT = 0; });
     on('bar_changed', () => { this.spellDirty = true; });
-    on('bags_changed', () => { this.merchantDirty = true; });
+    on('bags_changed', () => { this.merchantDirty = true; this.profDirty = true; });
+    on('skill_up', () => { this.profDirty = true; });
+    on('marks', () => { this.merchantDirty = true; this.bagsDirty = true; });
     on('money', () => { this.merchantDirty = true; });
     on('waypoint', () => { if (ui.worldMap.isOpen) this.drawWorldMap(); });
     on('popup_close', ({ kind }) => { if (kind === 'readycheck') { try { this.readyPopup?.close(); } catch { } this.readyPopup = null; } });
@@ -310,6 +342,10 @@ export class HUD {
     const bar = g.pc?.bar || [];
     const slots = bar.map((id, i) => {
       if (!id) return null;
+      if (id.startsWith('item:') && i < 10) { // an item you dragged onto the bar (food, a mount, fireworks…)
+        const iid = id.slice(5), def = ITEMS[iid]; if (!def) return null; const n = game.countItem(iid);
+        return { icon: def.icon, name: def.name, keybind: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'][i], count: def.stack ? n : '', usable: n > 0, active: def.use === 'mount' && !!p.mount, cd: /Potion/.test(def.use || '') && p.cdLeft('potion') > 0 ? { remaining: p.cdLeft('potion'), duration: 60 } : null };
+      }
       const sp = SPELLS[id]; if (!sp) return null;
       const learned = !sp.learn || sp.learn <= p.level;
       const lit = learned && procLit(p, sp, id, t), cd = lit ? 0 : p.cdLeft(id); // a lit ability is ready now, whatever its cooldown
@@ -364,6 +400,7 @@ export class HUD {
     if (this.spellDirty && ui.spellbook.isOpen) { this.spellDirty = false; this.pushSpellbook(); }
     if (this.questDirty && ui.questLog.isOpen) { this.questDirty = false; this.pushQuestLog(); }
     if (ui.social.isOpen && (this.socialT = (this.socialT || 0) - dt) <= 0) { this.socialT = 1; this.pushSocial(); }
+    if (ui.professions.isOpen && ((this.profT = (this.profT || 0) - dt) <= 0 || this.profDirty)) { this.profT = 1; this.profDirty = false; if (this.e.prof) ui.professions.set(this.e.prof.view()); }
     if (ui.merchant.isOpen) {
       if (!this.vendor || e.mode !== 'world' || this.vendor.pos.distanceTo(p.pos) > 9) ui.merchant.close();
       else if (this.merchantDirty) { this.merchantDirty = false; this.pushMerchant(); }
@@ -392,7 +429,7 @@ export class HUD {
     const p = this.game.player;
     const slots = p.bags.map(b => b.gear ? { item: uiItem(b.gear), count: 1 } : { item: uiItem(ITEMS[b.id], b.id), count: b.count });
     while (slots.length < 16) slots.push(null);
-    this.ui.bags.set({ slots, money: p.gold });
+    this.ui.bags.set({ slots, money: p.gold, marks: p.marks || 0 });
   }
   pushCharacter() {
     const p = this.game.player, s = p.stats, slots = {};
@@ -407,6 +444,7 @@ export class HUD {
       slots,
       statGroups: [
         { title: 'Attributes', stats: [{ label: 'Strength', value: gs.str || 0 }, { label: 'Agility', value: gs.agi || 0 }, { label: 'Stamina', value: gs.sta || 0 }, { label: 'Intellect', value: gs.int || 0 }, { label: 'Spirit', value: gs.spi || 0 }, { label: 'Armor', value: Math.round(s.armor) }] },
+        (() => { const est = estimate(this.game, p), tip = 'A 90-second fight against a training dummy with your gear and abilities. Hover an item to see what it would change.'; return { title: 'Training Dummy', stats: [{ label: 'DPS', value: est.dps.toFixed(1), color: '#ffd35a', tip }, ...(est.hps != null ? [{ label: 'HPS', value: est.hps.toFixed(1), color: '#40ff90', tip }] : [])] }; })(),
         { title: p.cls === 'warrior' ? 'Melee' : 'Spell', stats: p.cls === 'warrior' ? [{ label: 'Damage', value: `${Math.round(s.dmgMin * 10)} - ${Math.round(s.dmgMax * 10)}` }, { label: 'Attack Power', value: Math.round(s.ap) }, { label: 'Crit Chance', value: s.crit.toFixed(1) + '%' }] : [{ label: 'Spell Power', value: Math.round(s.sp) }, { label: 'Crit Chance', value: s.crit.toFixed(1) + '%' }, { label: 'Mana', value: p.powerMax }] },
       ],
     });
@@ -429,6 +467,7 @@ export class HUD {
     for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && a.progress[i] < (o.count ?? 1)) markers.push({ x: o.area[0], z: o.area[1], kind: 'area', edge: true }); }); }
     if (p.party) for (const m of p.party.members) if (!m.offline) markers.push({ x: m.pos.x, z: m.pos.z, kind: 'party' });
     for (const w of this.e.waypoints?.markers() || []) markers.push(w);
+    if (this.tracking && this.e.prof) markers.push(...this.e.prof.tracked(this.tracking));
     if (p.corpsePos && p.ghost) markers.push({ x: p.corpsePos.x, z: p.corpsePos.z, kind: 'corpse', edge: true });
     for (const u of game.sim.query(p.pos, this.mmRadius)) if (u.hostile && !u.dead && u.inCombat && u.target === p) markers.push({ x: u.pos.x, z: u.pos.z, kind: 'hostile' });
     markers.push({ x: 0, z: -282, kind: 'portal', edge: p.level >= 9 });
@@ -471,7 +510,7 @@ export class HUD {
     ui.nameplates.begin();
     for (const u of g.sim.units) {
       if (u === p || !u.model?.root.visible) continue;
-      if (u.kind === 'critter' && u !== t) continue; // critters get a nameplate only when targeted
+      if ((u.kind === 'critter' || u.kind === 'node' || u.kind === 'object') && u !== t) continue; // critters, ore and herbs: a nameplate only when targeted
       const d = cam.position.distanceTo(u.pos);
       const foe = u === p.duelWith, isMob = u.hostile, maxD = u.boss ? 140 : isMob || foe ? 48 : u.kind === 'npc' ? 36 : 40;
       if (d > maxD && u !== t) continue;
@@ -498,8 +537,15 @@ export class HUD {
       const l = left - dt;
       if (l <= 0 || !u.model) { this.fctUnits.delete(u); continue; }
       this.fctUnits.set(u, l);
-      _v.set(u.pos.x, u.pos.y + (u.height || 1.8) * (u === p ? 1.05 : 1.15), u.pos.z).project(cam);
-      ui.fct.anchor(u.id, (_v.x * 0.5 + 0.5) * W, (-_v.y * 0.5 + 0.5) * H, _v.z < 1);
+      const big = u !== p && (u.boss || (u.radius || 0) > 2.2 || (u.height || 0) > 6);
+      if (big && !u.flying) {
+        // a dragon's head is far above you in melee: show its numbers where you're hitting it, on the side facing you
+        const dx = p.pos.x - u.pos.x, dz = p.pos.z - u.pos.z, d = Math.hypot(dx, dz) || 1, r = Math.min(d * 0.7, (u.radius || 2) * 0.85);
+        _v.set(u.pos.x + dx / d * r, p.pos.y + 3.4, u.pos.z + dz / d * r).project(cam);
+      } else _v.set(u.pos.x, u.pos.y + (u.height || 1.8) * (u === p ? 1.05 : 1.15), u.pos.z).project(cam);
+      let fx = (_v.x * 0.5 + 0.5) * W, fy = (-_v.y * 0.5 + 0.5) * H, on = _v.z < 1;
+      if (big) { if (!on) { fx = W / 2; fy = H * 0.3; on = true; } fx = Math.max(W * 0.1, Math.min(W * 0.9, fx)); fy = Math.max(H * 0.14, Math.min(H * 0.7, fy)); } // always on screen
+      ui.fct.anchor(u.id, fx, fy, on);
     }
   }
 
@@ -551,12 +597,14 @@ export class HUD {
   }
   pushMerchant() {
     const g = this.game, it = e => e.gear ? uiItem(e.gear) : uiItem(ITEMS[e.id], e.id);
-    this.ui.merchant.set({ name: this.vendor?.name || 'Merchant', items: (this.vendorStock || []).map(e => ({ item: it(e), price: e.price, count: e.count })),
-      buyback: (g.buybackList || []).map(b => ({ item: it(b), count: b.count, price: b.price })), money: g.player.gold });
+    const marks = this.vendorStock?.some(e => e.marks != null);
+    this.ui.merchant.set({ name: this.vendor?.name || 'Merchant', items: (this.vendorStock || []).map(e => ({ item: it(e), price: e.price, marks: e.marks, count: e.count })),
+      buyback: (g.buybackList || []).map(b => ({ item: it(b), count: b.count, price: b.price })), money: g.player.gold, marks: marks ? g.player.marks || 0 : null });
   }
   merchantBuy(i, n) {
     const e = this.vendorStock?.[i]; if (!e) return;
-    if (e.gear) { if (this.game.buyGear(e.gear, e.price)) this.vendorStock.splice(i, 1); } // one of each piece
+    if (e.marks != null) this.game.buyMarks(e, e.gear ? 1 : n);
+    else if (e.gear) { if (this.game.buyGear(e.gear, e.price)) this.vendorStock.splice(i, 1); } // one of each piece
     else this.game.buy(e.id, n, e.price * n);
     this.merchantDirty = true;
   }

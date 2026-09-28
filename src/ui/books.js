@@ -4,22 +4,12 @@ import { h, setText, show, classColor, CLASS_NAMES, rarityColor } from './util.j
 import { iconURL } from './icons.js';
 import { questMarkURL, glyphURL } from './art.js';
 import { moneyEl } from './tooltip.js';
-import { Window, itemSlot, fillSlot } from './panels.js';
+import { Window, itemSlot, fillSlot, dragIcon } from './panels.js';
 
-// ------------------------------------------------------------------------------------ dragging icons
-// A small shared drag: a ghost icon follows the pointer; dropping it on an action-bar slot places the ability.
-function dragIcon(ui, e, icon, onDrop) {
-  const ghost = h('img', 'evd-dragghost', document.body); ghost.src = iconURL(icon, 64);
-  const move = ev => { ghost.style.transform = `translate(${ev.clientX - 22}px, ${ev.clientY - 22}px)`; };
-  move(e);
-  const up = ev => {
-    removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true);
-    ghost.remove();
-    const slot = document.elementsFromPoint(ev.clientX, ev.clientY).find(n => n.classList?.contains('evd-abslot'));
-    const i = slot ? ui.actionBar.slots?.findIndex(s => s.el === slot) ?? -1 : -1;
-    onDrop(i);
-  };
-  addEventListener('pointermove', move, true); addEventListener('pointerup', up, true);
+// ------------------------------------------------------------------------------------ dragging abilities
+// dropping one on an action-bar slot places it there (dragIcon lives in panels.js)
+function dragAbility(ui, e, icon, onDrop) {
+  dragIcon(e, icon, (x, y, els) => { const slot = els.find(n => n.classList?.contains('evd-abslot')); onDrop(slot ? ui.actionBar.slots.findIndex(s => s.el === slot) : -1); });
 }
 /** Shift-drag an ability off the action bar to move it to another slot or take it off (WoW's locked bars). */
 export function enableBarDrag(ui) {
@@ -27,7 +17,7 @@ export function enableBarDrag(ui) {
   slots.forEach((s, i) => s.el.addEventListener('pointerdown', e => {
     if (e.button !== 0 || !e.shiftKey || e.pointerType === 'touch' || i >= 10 || !s.d) return;
     e.preventDefault(); e.stopPropagation();
-    dragIcon(ui, e, s.d.icon, j => ui.emit('barMove', i, j));
+    dragAbility(ui, e, s.d.icon, j => ui.emit('barMove', i, j));
   }, true));
 }
 
@@ -56,7 +46,7 @@ export class SpellBook extends Window {
         if (e.button !== 0) return;
         e.preventDefault();
         const x0 = e.clientX, y0 = e.clientY;
-        const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 6) { off(); dragIcon(this.ui, ev, sp.icon, i => { if (i >= 0 && i < 10) this.ui.emit('barPlace', i, sp.id); }); } };
+        const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 6) { off(); dragAbility(this.ui, ev, sp.icon, i => { if (i >= 0 && i < 10) this.ui.emit('barPlace', i, sp.id); }); } };
         const up = () => { off(); this.ui.emit('spellbookCast', sp.id); };
         const off = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); };
         addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true);
@@ -175,15 +165,72 @@ export class Merchant extends Window {
     this.grid.textContent = '';
     const list = back ? d.buyback : d.items;
     if (!list.length) h('div', 'mnone', this.grid, back ? 'Items you sell show up here for a while, in case you change your mind.' : 'Nothing for sale.');
+    const marksPrice = (e, el) => { const m = h('span', 'mmk', el); h('img', '', m).src = iconURL('emberMark', 32); m.append(String(e.marks)); };
     list.forEach((e, i) => {
       const r = h('div', 'mrow ptr', this.grid);
       const sl = itemSlot(r); fillSlot(sl, { item: e.item, count: e.count }); sl._tip = () => ({ type: 'item', item: e.item });
       const t = h('div', 'mt', r); const n = h('div', 'mn', t, e.item.name); n.style.color = rarityColor(e.item.rarity);
-      moneyEl(e.price, h('div', 'mp', t));
-      if (d.money < e.price) r.classList.add('poor');
+      if (e.marks != null) { marksPrice(e, h('div', 'mp', t)); if ((d.marks || 0) < e.marks) r.classList.add('poor'); }
+      else { moneyEl(e.price, h('div', 'mp', t)); if (d.money < e.price) r.classList.add('poor'); }
       r.addEventListener('click', ev => this.ui.emit(back ? 'merchantBuyback' : 'merchantBuy', i, ev.shiftKey ? 5 : 1));
       r.addEventListener('contextmenu', ev => { ev.preventDefault(); this.ui.emit(back ? 'merchantBuyback' : 'merchantBuy', i, 1); });
     });
     this.money.textContent = ''; moneyEl(d.money || 0, this.money);
+    if (d.marks != null) { const m = h('span', 'mmk', this.money); h('img', '', m).src = iconURL('emberMark', 32); m.append(`${d.marks} Ember Marks`); }
+  }
+}
+
+// ------------------------------------------------------------------------------------ professions
+export class ProfessionsWindow extends Window {
+  constructor(ui, parent) {
+    super(ui, parent, 'professions', 'heavy', 'Professions');
+    this.dock = true; this.sel = 'fishing';
+    const body = h('div', 'pfbody', this.el);
+    this.list = h('div', 'pflist', body);
+    this.page = h('div', 'pfpage', body);
+    this.data = [];
+  }
+  /** profs: [{ id, name, icon, kind, tip, skill, max, tool?, recipes: [{ id, name, icon, rarity, req, color, max, why, needs: [{ name, icon, need, have }], where }] }] */
+  set(profs) {
+    this.data = profs;
+    this.list.textContent = '';
+    for (const p of profs) {
+      const r = h('div', 'pfrow ptr' + (p.id === this.sel ? ' sel' : ''), this.list);
+      h('img', 'pfic', r).src = iconURL(p.icon, 64);
+      const t = h('div', 'pft', r); h('div', 'pfn', t, p.name);
+      const bar = h('div', 'pfbar', t); h('i', '', bar).style.width = (p.skill / p.max * 100) + '%'; h('span', '', bar, `${p.skill} / ${p.max}`);
+      r.addEventListener('click', () => { this.sel = p.id; this.set(this.data); });
+    }
+    const p = profs.find(x => x.id === this.sel) || profs[0]; if (!p) return;
+    const pg = this.page; pg.textContent = '';
+    const hd = h('div', 'pfhd', pg); h('img', '', hd).src = iconURL(p.icon, 64); h('span', '', hd, `${p.name} · ${p.skill} / ${p.max}`);
+    h('div', 'pftip', pg, p.tip);
+    if (p.tool !== undefined) h('div', 'pftool' + (p.tool ? '' : ' none'), pg, p.tool ? `Using: ${p.tool}` : p.id === 'fishing' ? 'You need a Fishing Pole.' : 'You need a Mining Pick.');
+    const ability = (id, icon, label) => {
+      const row = h('div', 'pfab', pg), sl = itemSlot(row, 'ptr'); sl.img.src = iconURL(icon, 64); sl.classList.remove('empty');
+      const bt = h('button', 'evd-btn small', row, label); bt.addEventListener('click', () => this.ui.emit('profUse', id));
+      h('span', 'pfdrag', row, 'Drag the icon onto your action bar.');
+      sl.addEventListener('pointerdown', e => { if (e.button !== 0) return; e.preventDefault(); const x0 = e.clientX, y0 = e.clientY;
+        const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 6) { off(); dragAbility(this.ui, ev, icon, i => { if (i >= 0 && i < 10) this.ui.emit('barPlace', i, id); }); } };
+        const up = () => { off(); this.ui.emit('profUse', id); };
+        const off = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', up, true); };
+        addEventListener('pointermove', mv, true); addEventListener('pointerup', up, true); });
+    };
+    if (p.id === 'fishing') ability('fishing', 'fishingPole', 'Fish');
+    if (p.id === 'cooking') ability('campfire', 'campfire', 'Basic Campfire');
+    if (!p.recipes.length) return;
+    h('div', 'pfh', pg, 'Recipes');
+    for (const r of p.recipes) {
+      const row = h('div', 'pfrec c-' + r.color, pg);
+      const sl = itemSlot(row); sl.img.src = iconURL(r.icon, 64, r.rarity === 'rare' || r.rarity === 'epic' ? { rarity: r.rarity } : undefined); sl.classList.remove('empty');
+      const t = h('div', 'pfrt', row);
+      h('div', 'pfrn', t, r.max > 0 ? `${r.name} [${r.max}]` : r.name);
+      const need = h('div', 'pfneed', t);
+      for (const n of r.needs) { const e = h('span', 'pfr' + (n.have >= n.need ? '' : ' short'), need); h('img', '', e).src = iconURL(n.icon, 32); e.append(`${n.have}/${n.need} ${n.name}`); }
+      h('div', 'pfwhere', t, r.color === 'red' ? `Requires ${p.name} (${r.req})` : r.where);
+      const b1 = h('button', 'evd-btn small', row, 'Create'), b2 = h('button', 'evd-btn small dark', row, 'All');
+      b1.disabled = b2.disabled = !!r.why; if (r.why) row._tip = { type: 'text', title: r.name, lines: [r.why] };
+      b1.addEventListener('click', () => this.ui.emit('craft', r.id, 1)); b2.addEventListener('click', () => this.ui.emit('craft', r.id, r.max));
+    }
   }
 }

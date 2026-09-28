@@ -99,6 +99,7 @@ export class Tooltip {
     if (it.setName) { this._line(''); this._line(it.setName, GOLD); }
     if (it.flavor) this._line(`"${it.flavor}"`, GOLD, 'wrap flavor');
     if (it.sell) { const l = this._line('Sell Price: ', WHITE, 'sell'); moneyEl(it.sell * (it.count || 1), l); }
+    for (const e of o.extra ?? this.ui.itemExtra?.(it) ?? []) this._line(e.text, e.color || WHITE, 'wrap'); // e.g. what equipping it would do to your DPS
     return it.icon;
   }
   /**

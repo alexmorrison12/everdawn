@@ -104,7 +104,7 @@ await step('the blacksmith forges gear for your class', async () => {
   await wait(400);
   await ev(() => [...document.querySelectorAll('.evd-quest .qo')].find(o => /browse your goods/.test(o.textContent))?.click());
   await wait(400);
-  return ev(() => { const A = __game, g = A.game, p = g.player, n0 = p.bags.length; const stock = A.hud.vendorStock.map(e => `${e.gear.slot}:${e.gear.cls}`); A.ui.emit('merchantBuy', 0, 1); const got = p.bags.slice(n0).map(b => b.gear?.name); A.ui.merchant.close(); return { stock, got, left: A.hud.vendorStock.length }; });
+  return ev(() => { const A = __game, g = A.game, p = g.player, n0 = p.bags.length; const stock = A.hud.vendorStock.map(e => e.gear ? `${e.gear.slot}:${e.gear.cls}` : e.id); A.ui.emit('merchantBuy', 0, 1); const got = p.bags.slice(n0).map(b => b.gear?.name); A.ui.merchant.close(); return { stock, got, left: A.hud.vendorStock.length }; });
 });
 
 await step('area loot: one corpse opens every nearby corpse of yours', () => ev(async () => {
@@ -232,6 +232,123 @@ await step('Social window (O): nearby players; invite one', async () => {
   await wait(300);
   return { ...open, ...after, leftParty: await ev(() => !__game.game.player.party) };
 });
+
+await step('hold both mouse buttons to run; \\ toggles autorun', async () => {
+  await ev(() => { const A = __game; while (A.ui.closeTop()) { /* */ } A.tp(60, 118); A.game.player.facing = 0; A.cam.yaw = 0; });
+  await wait(300);
+  const z0 = await ev(() => __game.game.player.pos.z);
+  await page.mouse.move(800, 420); await page.mouse.down({ button: 'left' }); await page.mouse.down({ button: 'right' });
+  await wait(900);
+  const held = await ev(() => __game.input.buttons);
+  await page.mouse.up({ button: 'right' }); await page.mouse.up({ button: 'left' });
+  const z1 = await ev(() => __game.game.player.pos.z);
+  await page.keyboard.press('Backslash'); await wait(700);
+  const auto = await ev(() => ({ on: __game.game.pc.autorun, z: __game.game.player.pos.z }));
+  await page.keyboard.press('Backslash'); await wait(100);
+  return { buttons: held, ranWithBothButtons: +(z0 - z1).toFixed(1), autorun: auto.on, autorunMoved: +(z1 - auto.z).toFixed(1), off: await ev(() => !__game.game.pc.autorun) };
+});
+
+await step('character sheet shows estimated DPS; tooltips show what an item would change', async () => {
+  await ev(() => { const g = __game.game, p = g.player; g.addGear(g.premadeGear(p.cls).weapon, false); g.addGear(g.premadeGear('warrior').chest, false); });
+  await page.keyboard.press('c'); await page.keyboard.press('b'); await wait(500);
+  return ev(() => {
+    const A = __game, p = A.game.player, cells = A.ui.bags.cells.filter(c => c._item);
+    const est = [...document.querySelectorAll('.evd-win-character .sg')].find(g => /Training Dummy/.test(g.textContent))?.textContent;
+    const mine = cells.find(c => c._item.classes?.[0] === 'Mage' && c._item.slot), other = cells.find(c => c._item.classes?.[0] === 'Warrior');
+    const tip = mine ? A.ui.itemExtra(mine._item) : null;
+    return { sheet: est, upgrade: tip?.map(l => l.text), otherClass: other ? A.ui.itemExtra(other._item) : 'n/a' };
+  });
+});
+
+await step('quest items you no longer need disappear', () => ev(() => {
+  const g = __game.game; g.addItem('candle', 5); g.addItem('spiderSilk', 3); g.checkQuestObjectives();
+  return { candles: g.countItem('candle'), silk: g.countItem('spiderSilk') };
+}));
+
+await step('drag an item out of your bags into the world to destroy it; drag within bags to move it', async () => {
+  await ev(() => { const A = __game; A.game.addItem('wolfPelt', 2); A.hud.bagsDirty = true; A.ui.character.close(); if (!A.ui.bags.isOpen) A.ui.bags.open(); });
+  await wait(400);
+  const pos = await ev(() => { const A = __game, cells = A.ui.bags.cells, i = A.game.player.bags.findIndex(b => b.id === 'wolfPelt'); const r = cells[i].getBoundingClientRect(), e = cells[i + 2 < cells.length ? 15 : 0].getBoundingClientRect(); return { i, x: r.x + r.width / 2, y: r.y + r.height / 2, ex: e.x + e.width / 2, ey: e.y + e.height / 2 }; });
+  // move it to the last (empty) slot
+  await page.mouse.move(pos.x, pos.y); await page.mouse.down(); await page.mouse.move(pos.x + 20, pos.y + 5, { steps: 3 }); await page.mouse.move(pos.ex, pos.ey, { steps: 6 }); await page.mouse.up();
+  await wait(300);
+  const moved = await ev(() => __game.game.player.bags.findIndex(b => b.id === 'wolfPelt'));
+  const p2 = await ev(i => { const r = __game.ui.bags.cells[i].getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, moved);
+  await page.mouse.move(p2.x, p2.y); await page.mouse.down(); await page.mouse.move(p2.x - 30, p2.y, { steps: 3 }); await page.mouse.move(700, 450, { steps: 8 }); await page.mouse.up();
+  await wait(300);
+  const asked = await ev(() => [...document.querySelectorAll('.evd-popup')].map(e => e.textContent).find(t => /destroy/.test(t)));
+  await ev(() => [...document.querySelectorAll('.evd-popup button')].find(b => b.textContent === 'Yes')?.click());
+  await wait(200);
+  return { from: pos.i, movedTo: moved, asked, pelts: await ev(() => __game.game.countItem('wolfPelt')) };
+});
+
+await step('professions: mining (needs a pick), herbalism, skill-ups; minimap tracking', () => ev(async () => {
+  const A = __game, g = A.game, p = g.player, pr = A.prof, sleep = ms => new Promise(r => setTimeout(r, ms));
+  const counts = { copper: pr.nodes.filter(n => n.node === 'copper').length, tin: pr.nodes.filter(n => n.node === 'tin').length, emberite: pr.nodes.filter(n => n.node === 'emberite').length, herbs: pr.nodes.filter(n => n.prof === 'herbalism').length };
+  const vein = pr.nodes.find(n => n.node === 'copper'); A.tp(vein.pos.x + 2, vein.pos.z + 1); await sleep(300);
+  pr.interact(vein); await sleep(200);
+  const noPick = [...document.querySelectorAll('.evd-err, [class*=err]')].map(e => e.textContent).find(t => /Mining Pick/.test(t)) || null;
+  g.addItem('miningPick', 1); p.casting = null;
+  pr.interact(vein); await sleep(3700);
+  const ore = g.countItem('copperOre'), mining = pr.skill('mining');
+  const herb = pr.nodes.find(n => n.node === 'peacebloom' || n.node === 'silverleaf'); A.tp(herb.pos.x + 1.5, herb.pos.z); await sleep(300); p.casting = null;
+  pr.interact(herb); await sleep(2700);
+  A.ui.emit('minimapTracking'); const track = A.hud.tracking;
+  return { counts, noPick, ore, mining, herbs: g.countItem('peacebloom') + g.countItem('silverleaf'), herbalism: pr.skill('herbalism'), veinGone: !pr.nodes.includes(vein), tracking: track, tracked: pr.tracked(track).length };
+}));
+
+await step('fishing: buy a pole from Gil, cast at the lake, wait for the splash, reel it in', () => ev(async () => {
+  const A = __game, g = A.game, p = g.player, pr = A.prof, sleep = ms => new Promise(r => setTimeout(r, ms));
+  const gil = g.npcs.gil; A.tp(gil.pos.x + 1, gil.pos.z + 1.5); p.gold += 1000; await sleep(300);
+  const stock = g.stock('gil').map(e => e.id); g.buy('fishingPole', 1, 150);
+  let cast = false;
+  for (let k = 0; k < 16 && !cast; k++) { p.facing = k / 16 * Math.PI * 2; p.casting = null; cast = !!pr.fish(); }
+  let bit = false; for (let i = 0; i < 90 && pr.bob; i++) { await sleep(200); if (pr.bob?.bit) { bit = true; break; } }
+  const before = ['trout', 'sunfish', 'oldBoot', 'pearl'].reduce((n, id) => n + g.countItem(id), 0);
+  pr.reel(); await sleep(200);
+  const caught = ['trout', 'sunfish', 'oldBoot', 'pearl'].reduce((n, id) => n + g.countItem(id), 0) - before;
+  return { gilSells: stock, cast, bit, caught, fishing: pr.skill('fishing'), bobberGone: !pr.bob };
+}));
+
+await step('crafting: campfire + cooking, alchemy anywhere, blacksmithing at the forge', () => ev(async () => {
+  const A = __game, g = A.game, p = g.player, pr = A.prof, sleep = ms => new Promise(r => setTimeout(r, ms));
+  A.tp(60, 118); await sleep(200); p.casting = null; p.inCombat = false;
+  g.addItem('trout', 2);
+  pr.campfire(); await sleep(2300);
+  const fire = pr.fires.length;
+  pr.craft('cookedTrout', 2); await sleep(4900);
+  g.addItem('peacebloom', 1); g.addItem('silverleaf', 1); const pots = g.countItem('potionHealth');
+  pr.craft('minorHealing', 1); await sleep(2300);
+  const forge = A.world.settle.lights.forges[0]; A.tp(forge.x + 2, forge.z + 2); await sleep(300); p.casting = null;
+  g.addItem('copperOre', 6); const n0 = p.bags.length;
+  pr.craft('copperCirclet', 1); await sleep(3400);
+  const made = [...p.bags.map(b => b.gear?.name), p.equip.head?.name].filter(n => n && /Copper/.test(n));
+  return { fire, cooked: g.countItem('cookedTrout'), brewed: g.countItem('potionHealth') - pots, forged: made, skills: { ...p.skills } };
+}));
+
+await step('the Quartermaster sells for Ember Marks; mounts, a pet and fireworks work', () => ev(async () => {
+  const A = __game, g = A.game, p = g.player, sleep = ms => new Promise(r => setTimeout(r, ms));
+  const q = g.npcs.quartermaster; A.tp(q.pos.x + 1.5, q.pos.z + 2); p.marks = 80; await sleep(300);
+  g.interact(q); await sleep(300);
+  [...document.querySelectorAll('.evd-quest .qo')].find(o => /browse your goods/.test(o.textContent))?.click(); await sleep(300);
+  const rows = [...document.querySelectorAll('.evd-win-merchant .mrow')].map(r => r.textContent.slice(0, 40));
+  const stock = A.hud.vendorStock, gi = stock.findIndex(e => e.gear), si = stock.findIndex(e => e.id === 'striderReins'), pi = stock.findIndex(e => e.id === 'emberling'), fi = stock.findIndex(e => e.id === 'firework');
+  A.ui.emit('merchantBuy', gi, 1); A.ui.emit('merchantBuy', si, 1); A.ui.emit('merchantBuy', pi, 1); A.ui.emit('merchantBuy', fi, 1);
+  const bought = { marksLeft: p.marks, gear: p.bags.filter(b => b.gear?.name.startsWith('Maw-Tested')).length, reins: g.countItem('striderReins'), whistle: g.countItem('emberling'), fireworks: g.countItem('firework') };
+  A.ui.merchant.close();
+  g.useItem('firework'); g.useItem('emberling'); await sleep(300);
+  const pet = !!A.companions.pet;
+  A.tp(60, 118); await sleep(200); p.inCombat = false; p.casting = null;
+  g.useItem('striderReins'); await sleep(1800);
+  const mounted = p.mount;
+  A.manual = true; p.facing = 0; A.cam.yaw = 0; const z0 = p.pos.z; A.input.keys.add('KeyW'); for (let i = 0; i < 60; i++) A.frame(1 / 60); A.input.keys.delete('KeyW'); A.frame(1 / 60); A.manual = false;
+  const speed = +(z0 - p.pos.z).toFixed(1);
+  const seat = +(p.model.root.position.y - p.pos.y).toFixed(2);
+  await sleep(300);
+  if (window.__shot) await window.__shot();
+  g.useItem('striderReins'); await sleep(100);
+  return { merchantRows: rows.slice(0, 3), bought, fireworksLeft: g.countItem('firework'), pet, mounted, runSpeed: speed, riderLifted: seat, dismounted: !p.mount };
+}));
 
 await step('Game Menu: Log Out goes to the title; Continue comes back with your bar layout', async () => {
   await ev(() => { const A = __game; while (A.ui.closeTop()) { /* */ } const p = A.game.player; p.inCombat = false; A.ui.settings.open(); });

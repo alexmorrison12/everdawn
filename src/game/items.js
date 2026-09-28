@@ -24,6 +24,34 @@ export const ITEMS = {
   bread: { name: 'Fresh Dawnhollow Bread', icon: 'food', rarity: 'common', stack: 20, use: 'eat' },
   water: { name: 'Refreshing Spring Water', icon: 'drink', rarity: 'common', stack: 20, use: 'drink' },
   hearthstone: { name: 'Hearthstone', icon: 'hearthstone', rarity: 'common', use: 'hearth', flavor: 'Returns you to Dawnhollow.' },
+  // ---- professions (game/professions.js): tools, catches, ore, herbs and what you make from them
+  fishingPole: { name: 'Fishing Pole', icon: 'fishingPole', rarity: 'common', tool: 'fishing', sell: 1, flavor: 'Point the pointy end at the water.' },
+  dragonscalePole: { name: 'Dragonscale Fishing Pole', icon: 'fishingPoleGold', rarity: 'rare', tool: 'fishing', toolBonus: 25, sell: 12, flavor: 'The line never tangles. The fish can tell.' },
+  miningPick: { name: 'Mining Pick', icon: 'pickaxe', rarity: 'common', tool: 'mining', sell: 2 },
+  trout: { name: 'Mirrormere Trout', icon: 'fishTrout', rarity: 'common', stack: 20, sell: 3 },
+  sunfish: { name: 'Spotted Sunfish', icon: 'fishSun', rarity: 'common', stack: 20, sell: 3 },
+  snapper: { name: 'Stormfin Snapper', icon: 'fishSnapper', rarity: 'common', stack: 20, sell: 6 },
+  eel: { name: 'Harbor Eel', icon: 'fishEel', rarity: 'common', stack: 20, sell: 5 },
+  oldBoot: { name: 'Old Boot', icon: 'boots', rarity: 'poor', stack: 5, sell: 1, flavor: 'Size eleven. Left foot. Still looking for the right one.' },
+  pearl: { name: 'Glimmering Pearl', icon: 'pearl', rarity: 'uncommon', stack: 10, sell: 60 },
+  copperOre: { name: 'Copper Ore', icon: 'oreCopper', rarity: 'common', stack: 20, sell: 5 },
+  tinOre: { name: 'Tin Ore', icon: 'oreTin', rarity: 'common', stack: 20, sell: 8 },
+  emberite: { name: 'Emberite Ore', icon: 'oreEmber', rarity: 'uncommon', stack: 20, sell: 16, flavor: 'Warm. Warmer than it should be.' },
+  tigerseye: { name: "Tigerseye", icon: 'gem', rarity: 'uncommon', stack: 10, sell: 30 },
+  peacebloom: { name: 'Peacebloom', icon: 'herbPeace', rarity: 'common', stack: 20, sell: 2 },
+  silverleaf: { name: 'Silverleaf', icon: 'herbSilver', rarity: 'common', stack: 20, sell: 2 },
+  briarthorn: { name: 'Briarthorn', icon: 'herbBriar', rarity: 'common', stack: 20, sell: 5 },
+  embergrass: { name: 'Embergrass', icon: 'herbEmber', rarity: 'uncommon', stack: 20, sell: 10 },
+  cookedTrout: { name: 'Cooked Trout', icon: 'fishCooked', rarity: 'common', stack: 20, use: 'eatWell', sell: 4 },
+  sunfishSkewer: { name: 'Sunfish Skewer', icon: 'fishCooked', rarity: 'common', stack: 20, use: 'eatWell', sell: 4 },
+  snapperSupper: { name: 'Stormfin Supper', icon: 'fishCookedGold', rarity: 'uncommon', stack: 20, use: 'eatWell', sell: 8, flavor: 'The captain\'s own recipe. He would like it back.' },
+  potionEmber: { name: 'Ember Tonic', icon: 'elixirEmber', rarity: 'uncommon', stack: 10, use: 'elixir', sell: 10 },
+  // ---- Ember Marks buy these from the Quartermaster (game/game.js stock)
+  firework: { name: 'Ember Firework', icon: 'firework', rarity: 'common', stack: 20, use: 'firework' },
+  mawElixir: { name: 'Elixir of the Maw', icon: 'elixir', rarity: 'uncommon', stack: 10, use: 'elixir', flavor: 'Bottled in the dragon\'s own lair. Do not ask how.' },
+  emberling: { name: 'Emberling Whistle', icon: 'whelp', rarity: 'rare', use: 'pet', flavor: 'A tiny whelp who thinks you are its mother.' },
+  striderReins: { name: 'Reins of the Ashen Strider', icon: 'mount', rarity: 'epic', use: 'mount', mount: 'strider' },
+  drakeReins: { name: 'Reins of the Ember Drake', icon: 'drakeReins', rarity: 'epic', use: 'mount', mount: 'drake', flavor: 'The Maw remembers. So does this drake.' },
 };
 
 // ---------------- gear ----------------
@@ -43,6 +71,7 @@ const RMULT = { poor: 0.4, common: 0.7, uncommon: 1.0, rare: 1.35, epic: 1.8, le
 const TIER = { poor: 0, common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 3 };
 
 let GID = 1;
+export const nextUid = () => GID++;
 /** Generate a gear piece for class `cls` at item level `ilvl`. */
 export function makeGear(rng, cls, ilvl, rarity, slot = null) {
   if (typeof rng === 'number' || typeof rng === 'string') rng = new RNG(rng);

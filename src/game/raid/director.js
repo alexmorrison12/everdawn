@@ -13,6 +13,7 @@ import { AFFIXES, HAZARD_NAMES } from './daily.js';
 import { Lair, ELEMENTS } from '../../world/lair.js';
 import { createModel } from '../../models/factory.js';
 import { makeGear, makeLegendary, LEGENDARY_CHANCE } from '../items.js';
+import { MARKS_PER_KILL } from '../game.js';
 import { bus } from '../events.js';
 import { RNG } from '../../core/noise.js';
 
@@ -280,6 +281,8 @@ export class RaidState {
     this.combat.later(1.2, () => { for (const m of this.raiders.filter(x => x.kind === 'sim' && !x.dead)) { m.model?.play?.(rng.next() < 0.5 ? 'cheer' : 'dance'); } });
     const cheer = ['GG', 'GGGGG', 'LETS GOOOO', 'gg ez', 'finally', 'grats all', 'gz', 'first kill for me!!', 'ty for the carry', `gg ${this.player.name}`];
     for (let i = 0; i < 6; i++) this.combat.later(1.5 + i * 0.6 + rng.next(), () => this.say(pick(rng, this.raiders.filter(m => m.kind === 'sim')), pick(rng, cheer)));
+    // everyone's share: Ember Marks for the Quartermaster
+    if (!this.watch) { this.player.marks = (this.player.marks || 0) + MARKS_PER_KILL; bus.emit('marks', { amount: MARKS_PER_KILL }); this.combat.later(2, () => this.social.post('system', null, `You receive ${MARKS_PER_KILL} Ember Marks. Spend them with Quartermaster Brannoc in Dawnhollow.`)); }
     // loot
     const loot = [];
     const classes = [...new Set(this.raiders.map(m => m.cls))];
@@ -333,7 +336,7 @@ export class RaidState {
     if (!win) return null;
     this.social.post('loot', null, `${win.m === this.player ? 'You' : win.m.name} won: [${item.name}]`, { links: [{ name: item.name, rarity: item.rarity, item }] });
     if (win.m !== this.player && win.kind === 'need' && item.cls !== win.m.cls) this.combat.later(1.5, () => this.say(pick(rng, this.raiders.filter(x => x !== win.m && x.kind === 'sim')), pick(rng, ['NINJA', 'ninja looter!!', `${win.m.name} u cant even use that`, 'reported', 'wow'])));
-    if (win.m === this.player) { if (item.mount) this.worldGame.hasMount = true; else this.worldGame.addGear(item); this.social.react('epic', 0.9); }
+    if (win.m === this.player) { if (item.mount) this.worldGame.addItem('drakeReins', 1); else this.worldGame.addGear(item); this.social.react('epic', 0.9); }
     if (item.rarity === 'legendary') { // the realm hears about it
       bus.emit('raid_warning', { text: `${win.m.name} receives ${item.name}!`, color: '#ff8000' });
       const s = pick(rng, this.social.sims.filter(x => !x.dead));

@@ -138,6 +138,7 @@ export class Animator {
     this.swimW = damp(this.swimW, swimming ? 1 : 0, 4, dt);
     this.airW = damp(this.airW, !grounded && !swimming ? 1 : 0, 12, dt);
     this.sitW = damp(this.sitW, s.sit && mv < 0.1 ? 1 : 0, 5, dt);
+    this.rideW = damp(this.rideW || 0, s.ride ? 1 : 0, 8, dt);
     this.castType = s.casting || this.castType;
     this.castW = damp(this.castW, s.casting ? 1 : 0, 10, dt);
     if (s.casting) this.castT += dt; else this.castT = 0;
@@ -178,6 +179,7 @@ export class Animator {
     if (this.landT < 0.35) { const k = Math.sin(clamp(this.landT / 0.35, 0, 1) * Math.PI) * (1 - this.moveW * 0.6); P.hip[1] -= 0.11 * k * R.legLen / 0.87; P.add(B.spine, -0.12 * k, 0, 0); P.add(B.chest, -0.06 * k, 0, 0); }
     if (this.swimW > 0.01) { swimPose(this.T1.clear(), ctx, this, smv); P.lerp(this.T1, this.swimW); }
     if (this.sitW > 0.01) { sitPose(this.T1.clear(), ctx, this); P.lerp(this.T1, this.sitW); }
+    if (this.rideW > 0.01) { ridePose(this.T1.clear(), ctx, this); P.lerp(this.T1, this.rideW); }
     // emotes / dances (full body)
     if (this.emote) {
       const e = this.emote;
@@ -588,6 +590,23 @@ function sitPose(p, ctx, A) {
     p.set(B['shin' + s], -2.1, 0, 0);
     p.set(B['foot' + s], 0.4, 0, 0);
     setArm(p, s, 0.55, 0.35, -0.2, 0.7, -0.2, 0, 0.3);
+  }
+}
+
+// astride a mount: hips at the root (the game lifts the root onto the saddle), knees out and down, hands on the reins
+function ridePose(p, ctx, A) {
+  const R = ctx.rig, t = ctx.t;
+  p.ikw = 0;
+  p.hip[1] = -(R.hips.y - 0.04); p.hip[2] = 0.02;
+  const bob = Math.sin(t * 7) * 0.02 * (A.rideGait || 0);
+  p.set(B.hips, 0.12, 0, 0);
+  p.set(B.spine, 0.05 + bob, 0, 0); p.set(B.chest, 0.02, 0, 0); p.set(B.neck, -0.05, 0, 0); p.set(B.head, 0.05, 0, 0);
+  for (const s of ['L', 'R']) {
+    const sg = s === 'R' ? 1 : -1;
+    p.set(B['thigh' + s], 0.95, -sg * 0.2, sg * 0.62);
+    p.set(B['shin' + s], -1.35, 0, 0);
+    p.set(B['foot' + s], 0.35, 0, 0);
+    setArm(p, s, 0.75, 0.25, -0.15, 0.95, -0.25, 0, 0.25);
   }
 }
 

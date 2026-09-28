@@ -16,7 +16,7 @@ import { Alerts } from './alerts.js';
 import { BossTimers, Meter } from './bosstimers.js';
 import { Popups, LootWindow, RollFrames, QuestDialog, DeathOverlay } from './dialogs.js';
 import { CharacterPanel, Bags, WorldMap, HelpOverlay, Settings } from './panels.js';
-import { SpellBook, QuestLog, SocialPanel, Merchant, enableBarDrag } from './books.js';
+import { SpellBook, QuestLog, SocialPanel, Merchant, ProfessionsWindow, enableBarDrag } from './books.js';
 import { LoginScreen, CreateScreen, ResultsScreen, LoadingScreen } from './screens.js';
 
 export { iconURL, iconCanvas } from './icons.js';
@@ -101,6 +101,7 @@ export class UI {
     this.questLog = new QuestLog(this, win);
     this.social = new SocialPanel(this, win);
     this.merchant = new Merchant(this, win);
+    this.professions = new ProfessionsWindow(this, win);
     this.character.dock = true;
     this.loot = new LootWindow(this, win);
     this.popups = new Popups(this, this.modalLayer); // above screens too: the title's "Continue as…?" prompt must be visible
@@ -173,7 +174,7 @@ export class UI {
   }
   /** Toggle a panel by name: character | bags | spellbook | quests | social | map | help | settings | meter */
   toggle(name) {
-    const p = { character: this.character, bags: this.bags, spellbook: this.spellbook, quests: this.questLog, social: this.social, map: this.worldMap, help: this.help, settings: this.settings }[name];
+    const p = { character: this.character, bags: this.bags, spellbook: this.spellbook, quests: this.questLog, social: this.social, professions: this.professions, map: this.worldMap, help: this.help, settings: this.settings }[name];
     if (p) p.toggle();
     else if (name === 'meter') { const on = this.meter.el.classList.toggle('hidden'); this.micro.setActive('meter', !on); }
   }
@@ -201,7 +202,7 @@ export class UI {
       this.emit('escape');
       return;
     }
-    const map = { KeyC: 'character', KeyB: 'bags', KeyP: 'spellbook', KeyL: 'quests', KeyO: 'social', KeyM: 'map', KeyH: 'help', KeyN: 'meter' };
+    const map = { KeyC: 'character', KeyB: 'bags', KeyP: 'spellbook', KeyL: 'quests', KeyO: 'social', KeyK: 'professions', KeyM: 'map', KeyH: 'help', KeyN: 'meter' };
     const name = map[e.code];
     if (name && !e.repeat) { this.toggle(name); e.preventDefault(); }
   }

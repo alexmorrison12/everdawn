@@ -203,6 +203,23 @@ if (process.argv.includes('--social')) {
     const end = await H.evaluate(() => { const p = __game.game.player; return { hp: p.hp, dead: p.dead, duel: !!p.duel }; });
     return { popup, counting, live, hostHpDrop: Math.round(hp0 - hp1), end, guestSaw: await lines(Gp, 'in a duel'), guestAfter: await Gp.evaluate(() => ({ duel: !!__game.game.player.duel, flags: (() => { let n = 0; __game.world.scene.traverse(o => { if (o.geometry?.type === 'PlaneGeometry' && o.material?.color?.getHex?.() === 0xb01818) n++; }); return n; })() })) };
   });
+  await step('mounts show up for the other player', async () => {
+    await Gp.evaluate(async () => { const A = __game, g = A.game, p = g.player; g.addItem('striderReins'); p.inCombat = false; p.casting = null; g.useItem('striderReins'); await new Promise(r => setTimeout(r, 1900)); });
+    await wait(800);
+    const hostSees = await H.evaluate(() => __game.net.proxies()[0]?.mount || null);
+    await H.evaluate(async () => { const A = __game, g = A.game, p = g.player; g.addItem('drakeReins'); p.inCombat = false; p.casting = null; g.useItem('drakeReins'); await new Promise(r => setTimeout(r, 1900)); });
+    await wait(800);
+    const guestSees = await Gp.evaluate(() => [...__game.guest.units.values()].find(u => u.name === 'Hostia')?.mount || null);
+    return { hostSeesGuestOn: hostSees, guestSeesHostOn: guestSees };
+  });
+  await step('leaderboards: each sees the other\'s kills (and the realm\'s AI raiders)', async () => {
+    const day = await H.evaluate(() => __game.dragon.day);
+    await Gp.evaluate(day => { const e = { day, at: Date.now(), name: 'Guestor', cls: 'mage', race: 'elf', role: 'ranged', killTime: 201, dps: 612, hps: 0, attempts: 1, deaths: 0, parse: 99 }; const db = JSON.parse(localStorage.getItem('everdawn.v1')); db.kills.push(e); localStorage.setItem('everdawn.v1', JSON.stringify(db)); __game.guest.net.send({ t: 'kills', l: [e] }); }, day);
+    await wait(1200);
+    return H.evaluate(async () => { const m = await import('/src/meta/meta.js').catch(() => null); return null; }).then(async () => ({
+      hostBoard: await H.evaluate(() => { const db = JSON.parse(localStorage.getItem('everdawn.v1')); return (db.friendKills || []).map(k => k.name); }),
+    }));
+  });
   await step('host stops hosting: the guest is told and can go back to the title', async () => {
     await H.evaluate(() => __game.stopHosting());
     await wait(2500);

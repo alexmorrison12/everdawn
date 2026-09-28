@@ -151,6 +151,7 @@ export const MICRO = [
   { id: 'bags', icon: 'bag', key: 'B', label: 'Bags' },
   { id: 'spellbook', icon: 'prayer', key: 'P', label: 'Spellbook & Abilities' },
   { id: 'quests', icon: 'letter', key: 'L', label: 'Quest Log' },
+  { id: 'professions', icon: 'pickaxe', key: 'K', label: 'Professions: fishing, mining, herbalism, cooking, alchemy, blacksmithing' },
   { id: 'social', icon: 'raceHuman', key: 'O', label: 'Social: your group and players nearby' },
   { id: 'map', icon: 'map', key: 'M', label: 'World Map' },
   { id: 'meter', icon: 'dragonScale', key: 'N', label: 'Damage Meter' },

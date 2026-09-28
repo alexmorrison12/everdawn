@@ -10,19 +10,33 @@ import { MOBS, mobStats } from './data/mobs.js';
 import { CLASSES, xpToNext, mobXP, MAX_LEVEL } from './data/classes.js';
 import { SPELLS } from './data/spells.js';
 import { NPCS, QUESTS, QUEST } from './data/quests.js';
-import { ITEMS, makeGear, SLOTS } from './items.js';
+import { ITEMS, makeGear, SLOTS, nextUid } from './items.js';
 import { CAMPS, PLACES, WATER_Y } from '../world/zone.js';
 import { createModel } from '../models/factory.js';
+import { MOUNTS } from './companions.js';
 import { bus } from './events.js';
 import { RNG } from '../core/noise.js';
 import { G } from '../engine/materials.js';
 import { Social } from './social.js';
 import { Duels } from './duel.js';
 
+// Ember Marks: every dragon kill pays them; the Quartermaster takes them
+export const MARKS_PER_KILL = 5;
+
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 const AREA_LOOT = 12;                          // looting one corpse loots every corpse of yours this close
-export const PRICE = { bread: 25, water: 25, potionHealth: 100, potionMana: 100 }; // copper, each
+export const PRICE = { bread: 25, water: 25, potionHealth: 100, potionMana: 100, fishingPole: 150, miningPick: 250 }; // copper, each
 export const fmtMoney = c => { const g = Math.floor(c / 10000), s = Math.floor(c / 100) % 100, cc = c % 100; return [g && `${g}g`, s && `${s}s`, (cc || (!g && !s)) && `${cc}c`].filter(Boolean).join(' '); };
+
+/** A little firework show over a unit (the Quartermaster's Ember Firework). */
+export function firework(combat, at) {
+  const cols = [0xff5040, 0xffd040, 0x40c0ff, 0xa060ff, 0x60ff90];
+  for (let i = 0; i < 6; i++) combat.later(i * 0.35, () => {
+    const p = at.clone().add(new THREE.Vector3((Math.random() - 0.5) * 6, 12 + Math.random() * 6, (Math.random() - 0.5) * 6));
+    bus.emit('fx', { name: i % 2 ? 'holyImpact' : 'arcaneImpact', pos: p, scale: 3.5, color: cols[i % cols.length] });
+    bus.emit('sound', { name: 'crit', pos: p, vol: 0.5 });
+  });
+}
 
 export class GameState {
   constructor(engine) {
@@ -95,7 +109,8 @@ export class GameState {
     const u = new Unit({ name: ch.name, kind: 'player', hostile: false, level: ch.level || 1, cls: ch.cls, race: ch.race, sex: ch.sex, pos: V3(P.x + 2, 0, P.z - 8) });
     u.gravity = 19.3; // WoW's: a jump peaks about 1.6 m up and lasts ~0.8 s
     u.appearance = ch.appearance || {};
-    u.xp = ch.xp || 0; u.gold = ch.gold ?? 0;
+    u.xp = ch.xp || 0; u.gold = ch.gold ?? 0; u.marks = ch.marks || 0;
+    u.skills = { fishing: 1, mining: 1, herbalism: 1, cooking: 1, alchemy: 1, blacksmithing: 1, ...(ch.skills || {}) };
     u.equip = {}; u.bags = []; u.quests = []; u.questsDone = new Set(ch.questsDone || []);
     for (const s of SLOTS) u.equip[s] = null;
     if (ch.equip) Object.assign(u.equip, ch.equip);
@@ -114,6 +129,7 @@ export class GameState {
     if (!ch.bags) { this.addItem('hearthstone', 1); this.addItem(u.powerType === 'mana' ? 'water' : 'bread', 5); this.addItem('potionHealth', 2); }
     this.cam.yaw = u.facing; this.cam._first = true;
     if (ch.bags) u.bags = ch.bags.map(b => ({ ...b }));
+    if (ch.hasMount && !u.bags.some(b => b.id === 'drakeReins')) u.bags.push({ id: 'drakeReins', count: 1 }); // an old drake drop, now rideable
     if (ch.quests) u.quests = ch.quests.map(q => ({ id: q.id, progress: [...q.progress] }));
     if (ch.pos) { u.pos.set(ch.pos[0], 0, ch.pos[1]); u.pos.y = this.world.heightAt(u.pos.x, u.pos.z); }
     u.played = ch.played || 0; u.created = ch.created || Date.now(); u.jump = !!ch.jump; u.speedrunDone = !!ch.speedrunDone;
@@ -308,14 +324,29 @@ export class GameState {
   /** A merchant's stock for this character: [{ id?, gear?, price, count }]. The smith forges pieces for your class. */
   stock(npcId) {
     const def = NPCS[npcId], u = this.player;
-    if (def?.vendor === 'gear') {
+    if (def?.vendor === 'gear') { // the smith: pieces for your class, and a pick for the mines
       const rng = new RNG('smith-' + u.cls + '-' + u.level), L = Math.max(2, u.level + 1);
       return ['weapon', 'chest', 'legs', 'head', 'shoulders', 'feet'].map((slot, i) => {
         const g = makeGear(rng, u.cls, L, i < 2 ? 'uncommon' : 'common', slot);
         return { gear: g, price: Math.round((g.sell || 5) * 25 * 5), count: 1 };
-      });
+      }).concat([{ id: 'miningPick', price: PRICE.miningPick, count: 1 }]);
     }
-    return (def?.vendor || []).map(id => ({ id, price: PRICE[id] || 50, count: 1 }));
+    if (def?.vendor === 'marks') { // the Quartermaster: pre-raid gear a step below the dragon's, and some fun
+      const rng = new RNG('quartermaster-' + u.cls), cost = { head: 8, shoulders: 7, chest: 10, hands: 6, legs: 9, feet: 6, back: 5, weapon: 12 };
+      const gear = SLOTS.map(slot => { const g = makeGear(rng, u.cls, 13, 'rare', slot); g.name = g.name.replace(/^\S+/, 'Maw-Tested'); return { gear: g, marks: cost[slot], count: 1 }; });
+      return [...gear, { id: 'firework', marks: 1, count: 5 }, { id: 'mawElixir', marks: 2, count: 1 }, { id: 'dragonscalePole', marks: 8, count: 1 }, { id: 'emberling', marks: 15, count: 1 }, { id: 'striderReins', marks: 40, count: 1 }];
+    }
+    const list = (Array.isArray(def?.vendor) ? def.vendor : []).map(id => ({ id, price: PRICE[id] || 50, count: 1 }));
+    return list;
+  }
+  /** Buy with Ember Marks (the Quartermaster). */
+  buyMarks(e, n = 1) {
+    const u = this.player, cost = e.marks * n;
+    if ((u.marks || 0) < cost) { bus.emit('error', { unit: u, msg: "You don't have enough Ember Marks." }); return false; }
+    if (e.gear) { u.marks -= cost; u.bags.push({ gear: { ...e.gear, stats: { ...e.gear.stats }, uid: nextUid() }, count: 1 }); } // a fresh copy: the Quartermaster never runs out
+    else { if (ITEMS[e.id].use === 'pet' || ITEMS[e.id].use === 'mount' || ITEMS[e.id].tool) { if (this.countItem(e.id)) { bus.emit('error', { unit: u, msg: 'You already have one.' }); return false; } } u.marks -= cost; this.addItem(e.id, e.count * n); }
+    bus.emit('bags_changed', { unit: u }); bus.emit('marks', { amount: -cost });
+    return true;
   }
   buyGear(g, price) {
     const u = this.player;
@@ -344,10 +375,16 @@ export class GameState {
   useItem(id) {
     const u = this.player, def = ITEMS[id];
     if (!def?.use || this.countItem(id) <= 0) return;
+    if (u.mount && def.use !== 'mount') this.e.companions?.dismount(u);
     if (def.use === 'healPotion') { if (u.cdLeft('potion') > 0) return bus.emit('error', { unit: u, msg: 'Item is not ready yet' }); this.combat.heal(u, u, 40 + u.level * 18); u.cooldowns.set('potion', 60); this.removeItem(id); }
     else if (def.use === 'manaPotion') { if (u.cdLeft('potion') > 0) return bus.emit('error', { unit: u, msg: 'Item is not ready yet' }); u.gain(50 + u.level * 22); u.cooldowns.set('potion', 60); this.removeItem(id); }
     else if (def.use === 'eat' || def.use === 'drink') { if (u.inCombat) return bus.emit('error', { unit: u, msg: "You can't do that while in combat" }); u.addAura(def.use === 'eat' ? 'eating' : 'drinking', u); this.pc.sitting = true; this.removeItem(id); }
     else if (def.use === 'hearth') this.startHearth();
+    else if (def.use === 'eatWell') { if (u.inCombat) return bus.emit('error', { unit: u, msg: "You can't do that while in combat" }); u.addAura('eating', u); u.addAura('wellFed', u); this.pc.sitting = true; this.removeItem(id); }
+    else if (def.use === 'elixir') { u.addAura(id === 'potionEmber' ? 'emberTonic' : 'mawElixir', u); this.removeItem(id); bus.emit('sound', { name: 'heal', pos: u.pos }); }
+    else if (def.use === 'firework') { firework(this.combat, u.pos); this.removeItem(id); }
+    else if (def.use === 'pet') this.e.companions?.togglePet();
+    else if (def.use === 'mount') this.e.companions?.toggleMount(def.mount);
     bus.emit('item_used', { id });
   }
   startHearth() {
@@ -435,8 +472,30 @@ export class GameState {
     }
     if (changed) { this.refreshQuestMarkers(); bus.emit('quests_changed', {}); }
   }
+  /** Quest items stay only while a quest wants them, and never more than it wants (the rest just goes). */
+  pruneQuestItems() {
+    const u = this.player; if (!u) return;
+    const want = new Map(), need = (id, n) => want.set(id, Math.max(want.get(id) || 0, n));
+    for (const a of u.quests) { const q = QUEST[a.id]; if (q.startItem) need(q.startItem, 1); for (const o of q.obj) if (o.type === 'item') need(o.item, o.count ?? 1); }
+    const kept = new Map(); let changed = false;
+    u.bags = u.bags.filter(b => {
+      if (b.gear || !ITEMS[b.id]?.quest) return true;
+      const room = (want.get(b.id) || 0) - (kept.get(b.id) || 0), keep = Math.max(0, Math.min(b.count, room));
+      kept.set(b.id, (kept.get(b.id) || 0) + keep);
+      if (keep !== b.count) { changed = true; b.count = keep; }
+      return keep > 0;
+    });
+    if (changed) bus.emit('bags_changed', { unit: u });
+  }
+  destroyItem(i) {
+    const u = this.player, b = u.bags[i]; if (!b) return;
+    u.bags.splice(i, 1);
+    bus.emit('bags_changed', { unit: u });
+    this.checkQuestObjectives();
+  }
   checkQuestObjectives() {
     const u = this.player; if (!u) return;
+    this.pruneQuestItems();
     for (const a of u.quests) {
       const q = QUEST[a.id];
       q.obj.forEach((o, i) => {
@@ -503,7 +562,7 @@ export class GameState {
       u.loot = [];
       for (const l of t.loot || []) {
         if (this.rng.next() > l.chance) continue;
-        if (l.item) { const q = ITEMS[l.item]; if (q?.quest && l.quest && !p.quests.find(a => a.id === l.quest)) continue; u.loot.push({ id: l.item, count: 1 }); }
+        if (l.item) { const q = ITEMS[l.item], a = l.quest && p.quests.find(x => x.id === l.quest); if (q?.quest && l.quest && (!a || this.questComplete(a))) continue; u.loot.push({ id: l.item, count: 1 }); } // no quest items you don't need
         else if (l.gold) u.loot.push({ gold: Math.round((l.gold[0] + this.rng.next() * (l.gold[1] - l.gold[0])) * 100 * (0.5 + u.level * 0.1)) });
         else if (l.gear) u.loot.push({ gear: makeGear(this.rng, p.cls, u.level + (l.gear === 'rare' ? 3 : 1), l.gear) });
       }
@@ -589,9 +648,13 @@ export class GameState {
     let df = u.facing - (m.root.rotation.y || 0); df = Math.atan2(Math.sin(df), Math.cos(df));
     m.root.rotation.y += df * Math.min(1, dt * 14);
     const s = u.stateAnim;
-    s.dead = u.dead; s.casting = u.casting ? (u.casting.channel ? 'channel' : (u.casting.spell?.anim === 'castOmni' ? 'omni' : 'directed')) : null;
+    s.dead = u.dead; s.casting = u.casting && !u.casting.noPose ? (u.casting.channel ? 'channel' : (u.casting.spell?.anim === 'castOmni' ? 'omni' : 'directed')) : null;
     if (u.kind !== 'player') s.combat = s.combat || u.inCombat;
     if (u.hitStop > 0) { u.hitStop -= dt; dt *= 0.08; } // see bridge.js damage
+    if (u.mount) { // astride a mount: lifted onto the saddle, legs still
+      const d = MOUNTS[u.mount]; m.root.position.y += d.seat; m.root.position.x -= Math.sin(u.facing) * d.fwd; m.root.position.z -= Math.cos(u.facing) * d.fwd;
+      RIDE.combat = s.combat; RIDE.casting = s.casting; RIDE.dead = s.dead; m.update(dt, RIDE); return;
+    }
     m.update(dt, s);
   }
 
@@ -702,6 +765,8 @@ export class GameState {
 }
 
 // Every animation a unit plays is announced as 'anim' so a host can replay it on its guests' screens.
+const RIDE = { speed: 0, strafe: 0, turn: 0, grounded: true, vy: 0, swimming: false, sit: false, ride: true, combat: false, casting: null, dead: false };
+
 export function animTap(u) {
   const m = u.model; if (!m?.play || m._tapped) return;
   const play = m.play; m._tapped = true;

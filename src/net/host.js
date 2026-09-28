@@ -11,6 +11,9 @@ import { PUBLIC_URL } from '../meta/remote.js';
 import { enc, unitSpawn } from './codec.js';
 import { lobbyStyles } from './lobby.js';
 import { Party } from '../game/party.js';
+import { MOUNT_BY_CODE } from '../game/companions.js';
+import { firework } from '../game/game.js';
+import { addFriendKills, knownKills } from '../meta/meta.js';
 
 const RANGE = 150;                 // how far around a guest units are streamed
 const SNAP_EVERY = 1 / 12;         // seconds between state snapshots
@@ -102,13 +105,14 @@ export class HostSession {
       case 'atk': if (!p) return; p.target = this.unit(m.tgt) || p.target; p.autoAttack = !!m.on && !!p.target && p.isEnemy(p.target); if (p.autoAttack) p.swingT = Math.min(p.swingT, 0.3); return;
       case 'tgt': if (!p) return; p.target = this.unit(m.tgt) || null; if (!p.target || !p.isEnemy(p.target)) p.autoAttack = false; return;
       case 'int': if (p?.casting) cb.interrupt(p, 'Interrupted'); return;
-      case 'item': this.useItem(p, m.use); return;
+      case 'item': this.useItem(p, m.use, m.id); return;
       case 'rev': this.revive(p, m); return;
       case 'stats': this.stats(p, m); return;
       case 'chat': this.chat(gst, m); return;
       case 'emote': if (p && !p.dead) { p.model?.play?.(m.anim); if (m.text) this.g.social.post('emote', null, `${p.name} ${m.text}`, { unit: p, $from: gst.id }); } return;
       case 'bye': this.leave(gst.id); return;
       case 'party': this.partyOp(gst, m); return;
+      case 'kills': if (addFriendKills(m.l)) for (const o of this.guests.values()) if (o !== gst && o.proxy) this.send(o, { t: 'kills', l: m.l }); return; // leaderboard entries: keep, pass on
       case 'duel': {
         if (!p) return;
         const d = this.g.duels;
@@ -182,6 +186,7 @@ export class HostSession {
     this.app.ui.alerts.info(`${u.name} has joined your world!`);
     bus.emit('sound', { name: 'questComplete' });
     this.send(gst, { t: 'welcome', you: u.id, host: host?.id, hostName: host?.name, tod: this.app.world.tod, pos: [r1(x), r1(z)], raid: this.raiding ? this.raidInfo() : null });
+    this.send(gst, { t: 'kills', l: knownKills(this.app.dragon.day) }); // today's boards include each other
     this.badge.render();
   }
   removeProxy(gst) {
@@ -199,6 +204,7 @@ export class HostSession {
       soc.tellParty(party, `${u.name} has gone offline.`); soc.changed();
       setTimeout(() => { if (u.offline && u.party) soc.leave(u); }, 180000);
     }
+    this.app.companions?.setMount(u, null);
     for (const s of [this.g.sim, this.app.raid?.sim]) s?.remove(u);
     if (this.app.raid) this.app.raid.raiders = this.app.raid.raiders.filter(m => m !== u);
     for (const m of this.sim.units) { m.threat?.delete(u); if (m.target === u) m.target = null; }
@@ -210,10 +216,14 @@ export class HostSession {
     const a = m.a || [];
     Object.assign(p.stateAnim, { speed: a[0] || 0, strafe: a[1] || 0, grounded: !!a[2], vy: a[3] || 0, swimming: !!a[4], sit: !!a[5], combat: !!a[6] || p.inCombat });
     p.swimming = !!a[4]; p.grounded = !!a[2];
+    const mt = MOUNT_BY_CODE[a[7]] || null; if ((p.mount || null) !== mt) this.app.companions?.setMount(p, mt);
     if ((a[0] || a[1]) && p.casting && !p.casting.channel) this.combat.interrupt(p, 'Interrupted');
   }
-  useItem(p, use) {
+  useItem(p, use, id) {
     if (!p || p.dead) return;
+    if (use === 'eatWell') { if (!p.inCombat) { p.addAura('eating', p); p.addAura('wellFed', p); } return; }
+    if (use === 'elixir') { p.addAura(id === 'potionEmber' ? 'emberTonic' : 'mawElixir', p); return; }
+    if (use === 'firework') { firework(this.combat, p.pos); return; }
     if (use === 'healPotion') this.combat.heal(p, p, 40 + p.level * 18);
     else if (use === 'manaPotion') p.gain(50 + p.level * 22);
     else if (use === 'eat' || use === 'drink') { if (!p.inCombat) p.addAura(use === 'eat' ? 'eating' : 'drinking', p); }
@@ -306,7 +316,7 @@ export class HostSession {
     const me = gst.proxy, host = this.me, out = { t: 's' }, sp = [], rows = [], seen = new Set();
     const party = me.party;
     for (const u of this.sim.units) {
-      if (u === me || u.kind === 'critter' || (u.kind === 'npc' && !this.raiding)) continue;
+      if (u === me || u.kind === 'critter' || u.kind === 'node' || u.kind === 'object' || (u.kind === 'npc' && !this.raiding)) continue; // ore, herbs and bobbers are each player's own
       const d = Math.hypot(u.pos.x - me.pos.x, u.pos.z - me.pos.z);
       if (d > RANGE && !(party && u.party === party) && u !== host && !this.raiding) continue;
       seen.add(u.id);
@@ -340,7 +350,7 @@ export class HostSession {
   row(u, me) {
     const tapGroup = !!u.tapper && (u.tapper === me || (!!me.party && u.tapper === me.party)); // "yours" means this friend's (or their group's)
     const flags = (u.dead ? 1 : 0) | (u.inCombat ? 2 : 0) | (u.casting?.channel ? 4 : 0) | (tapGroup ? 8 : 0) | (u.tapper && !tapGroup ? 16 : 0)
-      | (u.stateAnim.sit ? 32 : 0) | (u.swimming ? 64 : 0) | (u.flying ? 256 : 0) | (u.afk ? 512 : 0) | (u.ghost ? 1024 : 0);
+      | (u.stateAnim.sit ? 32 : 0) | (u.swimming ? 64 : 0) | (u.flying ? 256 : 0) | (u.afk ? 512 : 0) | (u.ghost ? 1024 : 0) | (u.mount === 'strider' ? 2048 : u.mount === 'drake' ? 4096 : 0);
     const c = u.casting;
     const au = u.auras.length ? u.auras.map(a => `${a.id}:${a.stacks || 1}:${Math.ceil(a.rem)}:${Math.round(a.dur)}`).join(',') : 0;
     const row = [u.id, r1(u.pos.x), r1(u.pos.y), r1(u.pos.z), r2(u.facing), Math.round(u.hp), u.hpMax, r1(u.stateAnim.speed || 0), flags, u.target?.id || 0,

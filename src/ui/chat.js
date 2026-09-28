@@ -20,6 +20,7 @@ export const CHANNELS = {
   trade: { color: '#ffc0c0', label: '2. Trade' },
   lfg: { color: '#ffc0c0', label: '4. LookingForGroup' },
   system: { color: '#ffff00' },
+  skill: { color: '#5a8aff' },
   loot: { color: '#00c800' },
   money: { color: '#ffff00' },
   xp: { color: '#8f84ff' },

@@ -240,7 +240,7 @@ export class Combat {
     if (!dst || dst.dead) return 0;
     amt *= SCALE;
     const crit = !o.hot && this.rng.next() * 100 < src.stats.crit;
-    let h = amt * (crit ? 1.5 : 1) * dst.mod('healingTaken');
+    let h = amt * (crit ? 1.5 : 1) * dst.mod('healingTaken') * src.mod('healingDone');
     h = Math.round(h * (0.95 + this.rng.next() * 0.1));
     const eff = Math.min(h, dst.hpMax - dst.hp);
     dst.hp += eff;

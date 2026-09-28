@@ -203,6 +203,9 @@ export const SPELLS = {
   mobThrow: { name: 'Throw Dagger', school: 'physical', range: 25, minRange: 6, cd: 6, target: 'enemy', anim: 'attack1h', fx: { projectile: 'arrow' }, speed: 40, effect: c => c.damage(c.target, c.weapon(0.8), 'physical', { ability: true }) },
   mobCandle: { name: 'Candle Flare', school: 'fire', range: 0, cd: 12, target: 'none', anim: 'attack', fx: { self: 'fireImpact' }, effect: c => { for (const e of c.enemiesNear(c.caster.pos, 7)) c.damage(e, 6 + c.L * 2.4, 'fire', { aoe: true }); } },
   mobFlurry: { name: 'Blade Flurry', school: 'physical', range: 0, cd: 14, target: 'none', anim: 'attack2h', fx: { attach: 'whirlwind', attachDur: 1 }, effect: c => { for (const e of c.enemiesNear(c.caster.pos, 6)) c.damage(e, c.weapon(1.2) + 4, 'physical', { aoe: true, ability: true }); } },
+  // professions (game/professions.js): usable from the Professions window or the action bar
+  fishing: { name: 'Fishing', icon: 'fishingPole', prof: 'fishing', target: 'none', range: 0, cost: 0, offGcd: true, desc: () => 'Cast a line into the water in front of you. When the bobber splashes, right-click it or press Fishing again. Needs a Fishing Pole.' },
+  campfire: { name: 'Basic Campfire', icon: 'campfire', prof: 'cooking', target: 'none', range: 0, cost: 0, offGcd: true, desc: () => 'Builds a campfire you can cook at for 90 seconds.' },
 };
 
 // ---------------------------------------------- AURAS ----------------------------------------------
@@ -231,6 +234,9 @@ export const AURAS = {
   drinking: { name: 'Drink', icon: 'drink', dur: 18, mods: { sit: true }, regenPct: 0.07 },
   eating: { name: 'Food', icon: 'food', dur: 18, mods: { sit: true }, healPct: 0.07 },
   rested: { name: 'Well Rested', icon: 'food', dur: 3600 },
+  wellFed: { name: 'Well Fed', icon: 'fishCooked', dur: 900, mods: { damage: 1.03, healingDone: 1.03 }, desc: 'Damage and healing increased by 3%.' },
+  mawElixir: { name: 'Elixir of the Maw', icon: 'elixir', dur: 1800, mods: { damage: 1.08, healingDone: 1.08 }, desc: 'Damage and healing increased by 8%.' },
+  emberTonic: { name: 'Ember Tonic', icon: 'elixirEmber', dur: 600, mods: { damage: 1.05, healingDone: 1.05 }, desc: 'Damage and healing increased by 5%.' },
   ghost: { name: 'Ghost', icon: 'ghost', dur: 1e9, mods: { speed: 1.25 } },
   enrage: { name: 'Enrage', icon: 'enrage', dur: 1e9, mods: { damage: 1.5, attackSpeed: 1.4 } },
   staticCharge: { name: 'Static Charge', icon: 'stormPool', debuff: true, dur: 5 },

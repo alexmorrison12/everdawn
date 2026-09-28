@@ -1,4 +1,7 @@
-// Persistence, parse percentiles, local leaderboard, challenge links. Remote boards plug in via setRemote().
+// Persistence, parse percentiles, leaderboards (yours, friends' from co-op, the realm's SimPlayer raids, and the global
+// board when one is configured via setRemote()), challenge links.
+import { RNG } from '../core/noise.js';
+import { NAME_PARTS, CURATED_NAMES, GUILDS } from '../game/data/chat.js';
 const KEY = 'everdawn.v1';
 const safe = (fn, fb) => { try { return fn(); } catch { return fb; } };
 
@@ -13,7 +16,7 @@ export function serializeChar(g) {
     name: p.name, race: p.race, sex: p.sex, cls: p.cls, appearance: p.appearance, level: p.level, xp: p.xp, gold: p.gold,
     equip: p.equip, bags: p.bags, quests: p.quests, questsDone: [...p.questsDone], guild: g.social?.guild || null,
     pos: [p.pos.x, p.pos.z], hasMount: !!g.hasMount, created: p.created || Date.now(), playedMs: (p.playedMs || 0), jump: !!p.jump,
-    speedrunDone: !!p.speedrunDone, bar: g.pc?.custom ? g.pc.bar.slice(0, 10) : undefined,
+    speedrunDone: !!p.speedrunDone, marks: p.marks || 0, skills: p.skills, bar: g.pc?.custom ? g.pc.bar.slice(0, 10) : undefined,
   };
 }
 
@@ -56,23 +59,62 @@ export async function submitKill(entry) {
   return null;
 }
 
+/** Today's boards: your kills, friends' (shared while playing together), the realm's SimPlayers, and the global board. */
 export async function boards(day) {
-  if (remote) { try { const r = await remote.top(day); if (r) return { ...r, online: true }; } catch (e) { console.warn('leaderboard fetch failed', e); } }
-  const kills = store.load().kills.filter(k => !day || k.day === day);
-  const by = (f, dir = 1) => [...kills].sort((a, b) => (f(a) - f(b)) * dir).slice(0, 10);
+  const db = store.load(), mine = [...db.kills, ...(db.friendKills || [])].filter(k => !day || k.day === day);
+  let global = null;
+  if (remote) { try { global = await remote.top(day); } catch (e) { console.warn('leaderboard fetch failed', e); } }
+  const pool = [...mine, ...aiKills(day)];
+  if (global) for (const k of ['first', 'fastest', 'dps', 'hps', 'speedrun']) pool.push(...(global[k] || []));
+  // one row per kill (the same kill can arrive locally and from the global board)
+  const seen = new Set(), kills = pool.filter(k => { const id = `${k.name}|${Math.round((k.killTime || 0) * 10)}|${k.day}`; if (seen.has(id)) return false; seen.add(id); return true; });
+  const top = (list, f) => [...list].sort((a, b) => f(a) - f(b)).slice(0, 10);
   return {
-    online: false,
-    first: by(k => k.at).slice(0, 5),
-    fastest: by(k => k.killTime),
-    dps: by(k => -(k.role === 'heal' ? 0 : k.dps)).filter(k => k.role !== 'heal'),
-    hps: by(k => -(k.hps || 0)).filter(k => k.role === 'heal'),
-    speedrun: by(k => k.speedrun || 1e12).filter(k => k.speedrun),
+    online: !!global, total: kills.length,
+    first: top(kills, k => k.at).slice(0, 5),
+    fastest: top(kills, k => k.killTime),
+    dps: top(kills.filter(k => k.role !== 'heal'), k => -k.dps),
+    hps: top(kills.filter(k => k.role === 'heal'), k => -(k.hps || 0)),
+    speedrun: top(kills.filter(k => k.speedrun), k => k.speedrun),
   };
 }
+/** Kills a friend shared with you (co-op): kept so their names stay on your boards. */
+export function addFriendKills(list) {
+  const db = store.load(), have = new Set([...db.kills, ...(db.friendKills || [])].map(k => `${k.name}|${k.at}`));
+  const fresh = (list || []).filter(k => k && k.name && k.day && !have.has(`${k.name}|${k.at}`)).map(k => ({ ...k, friend: true }));
+  if (!fresh.length) return 0;
+  db.friendKills = [...(db.friendKills || []), ...fresh].slice(-300); store.save(db);
+  return fresh.length;
+}
+/** The kills you know of for a day (yours and friends'): what you share when you play together. */
+export function knownKills(day) { const db = store.load(); return [...db.kills, ...(db.friendKills || [])].filter(k => k.day === day).slice(-60); }
 
+// The realm's own raid groups kill the dragon through the day as well: seeded by the day (everyone sees the same ones),
+// appearing as the day goes on. Their numbers follow the same curve parses are graded on.
+const AI_ROLES = [['ranged', 'mage'], ['ranged', 'mage'], ['melee', 'warrior'], ['melee', 'warrior'], ['heal', 'priest']];
+export function aiKills(day, now = Date.now()) {
+  const start = Date.parse(day + 'T00:00:00Z'); if (!start) return [];
+  const rng = new RNG('realm-' + day), out = [], used = new Set();
+  const name = () => { for (let i = 0; i < 20; i++) { let n = rng.next() < 0.5 ? rng.pick(CURATED_NAMES) : rng.pick(NAME_PARTS.pre) + rng.pick(NAME_PARTS.post); n = n.charAt(0).toUpperCase() + n.slice(1).toLowerCase(); if (!used.has(n)) { used.add(n); return n; } } return 'Raider' + out.length; };
+  const n = 30 + Math.floor(rng.next() * 14);
+  for (let i = 0; i < n; i++) {
+    const at = start + (1.3 + Math.pow(i / n, 1.25) * 21.5 + rng.next() * 0.9) * 3600e3;
+    const [role, cls] = rng.pick(AI_ROLES), u = Math.min(0.995, Math.max(0.01, rng.next()));
+    const value = Math.max(40, MEDIAN[role] + SPREAD[role] * 0.6 * Math.log(u / (1 - u)));
+    const e = { day, at, ai: true, name: name(), cls, race: rng.pick(['human', 'dwarf', 'orc', 'elf']), role, guild: rng.next() < 0.7 ? rng.pick(GUILDS) : null,
+      killTime: 210 + rng.next() * 300 + (i < 3 ? 120 : 0), dps: role === 'heal' ? value * 0.25 : value, hps: role === 'heal' ? value : 0,
+      attempts: 1 + Math.floor(rng.next() * 3), deaths: rng.next() < 0.3 ? 1 : 0, speedrun: rng.next() < 0.3 ? Math.round((2.2 + rng.next() * 6) * 3600) : null, parse: 0 };
+    e.parse = parsePercentile(role, value);
+    if (at <= now) out.push(e);
+  }
+  return out;
+}
+
+/** Values to grade a parse against: the global board's, else today's realm (SimPlayers and friends). */
 export async function remoteSamples(day, role) {
-  if (!remote?.samples) return null;
-  try { return await remote.samples(day, role); } catch { return null; }
+  if (remote?.samples) { try { const s = await remote.samples(day, role); if (s?.length >= 20) return s; } catch { /* */ } }
+  const db = store.load(), all = [...aiKills(day, Infinity), ...(db.friendKills || []).filter(k => k.day === day)].filter(k => k.role === role);
+  return all.length >= 20 ? all.map(k => (role === 'heal' ? k.hps : k.dps)) : null;
 }
 
 // ---------------------------------------------------------------- challenge links

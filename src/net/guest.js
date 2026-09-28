@@ -11,7 +11,9 @@ import { ITEMS } from '../game/items.js';
 import { GuestTransport } from './peer.js';
 import { dec, spellIn } from './codec.js';
 import { Party } from '../game/party.js';
+import { MOUNT_CODE } from '../game/companions.js';
 import { duelFlag } from '../game/duel.js';
+import { addFriendKills, knownKills } from '../meta/meta.js';
 
 const SEND_EVERY = 1 / 15;
 const OTHER = { name: 'someone else', kind: 'other' };  // tapper stand-in: somebody outside your group
@@ -68,7 +70,8 @@ export class GuestSession {
   onMessage(m) {
     switch (m.t) {
       case 'hi': this.hostName = m.host || this.hostName; this.hello(); return;
-      case 'welcome': this.retrying = false; this.welcomed(m); return;
+      case 'welcome': this.retrying = false; this.welcomed(m); this.net.send({ t: 'kills', l: knownKills(this.app.dragon.day) }); return;
+      case 'kills': addFriendKills(m.l); return;
       case 's': this.snapshot(m); return;
       case 'e': for (const [type, data] of m.l) this.event(type, data); return;
       case 'force': this.force(m); return;
@@ -134,6 +137,7 @@ export class GuestSession {
   despawn(id) {
     const u = this.units.get(id); if (!u) return;
     this.units.delete(id);
+    if (u.mount) this.app.companions?.setMount(u, null);
     this.raid?.sim.remove(u); this.g.sim.remove(u);
     if (this.p?.target === u) (this.raid?.pc || this.g.pc)?.setTarget(null);
     u.model?.dispose?.();
@@ -151,6 +155,7 @@ export class GuestSession {
     const a = u.stateAnim;
     a.speed = spd; a.sit = !!(fl & 32); a.swimming = u.swimming = !!(fl & 64); a.combat = !!(fl & 2);
     u.flying = !!(fl & 256); u.afk = !!(fl & 512); u.ghost = !!(fl & 1024);
+    const mt = fl & 2048 ? 'strider' : fl & 4096 ? 'drake' : null; if ((u.mount || null) !== mt) this.app.companions?.setMount(u, mt);
     if (st) { a.flying = !!st[0]; a.enraged = !!st[1]; a.altitude = st[2]; a.turn = st[3]; u.altitude = st[2]; }
     u.target = tgt ? this.resolve(tgt) || null : null;
     u.casting = cid ? { id: cid, spell: spellIn(cid, u.casting?.id === cid ? u.casting.spell : null), t: ct, dur: cd, channel: !!(fl & 4), target: u.target } : null;
@@ -236,7 +241,7 @@ export class GuestSession {
   }
   lootWon(item) {
     if (!item) return;
-    if (item.mount) this.g.hasMount = true; else this.g.addGear(item);
+    if (item.mount) { if (!this.g.countItem('drakeReins')) this.g.addItem('drakeReins', 1); } else this.g.addGear(item);
     const orange = item.rarity === 'legendary';
     this.app.ui.alerts.raidWarning(`You won ${item.name}!`, orange ? '#ff8000' : '#a335ee');
     bus.emit('sound', { name: orange ? 'legendary' : 'epicLoot' });
@@ -258,7 +263,7 @@ export class GuestSession {
     if (p && this.joined && this.sendT <= 0) {
       this.sendT = SEND_EVERY;
       const a = p.stateAnim;
-      this.net.send({ t: 'st', x: r2(p.pos.x), y: r2(p.pos.y), z: r2(p.pos.z), f: r2(p.facing), a: [r1(a.speed || 0), r1(a.strafe || 0), a.grounded ? 1 : 0, r1(a.vy || 0), a.swimming ? 1 : 0, a.sit ? 1 : 0, a.combat ? 1 : 0] });
+      this.net.send({ t: 'st', x: r2(p.pos.x), y: r2(p.pos.y), z: r2(p.pos.z), f: r2(p.facing), a: [r1(a.speed || 0), r1(a.strafe || 0), a.grounded ? 1 : 0, r1(a.vy || 0), a.swimming ? 1 : 0, a.sit ? 1 : 0, a.combat ? 1 : 0, MOUNT_CODE[p.mount] || 0] });
       const sig = `${p.level}|${p.gearLook}|${Object.values(p.equip || {}).map(i => i?.uid ?? i?.name ?? '').join(',')}`;
       if (sig !== this.statsSig) { if (this.statsSig) this.net.send({ t: 'stats', level: p.level, equip: p.equip, look: p.gearLook || 0 }); this.statsSig = sig; }
     }
@@ -315,7 +320,7 @@ export class GuestSession {
     g.useItem = itemId => {
       const def = ITEMS[itemId], before = g.countItem(itemId);
       useItem(itemId);
-      if (def?.use && g.countItem(itemId) < before && ['healPotion', 'manaPotion', 'eat', 'drink'].includes(def.use)) self.net.send({ t: 'item', use: def.use });
+      if (def?.use && g.countItem(itemId) < before && ['healPotion', 'manaPotion', 'eat', 'drink', 'eatWell', 'elixir', 'firework'].includes(def.use)) self.net.send({ t: 'item', use: def.use, id: itemId }); // the host applies what combat needs
     };
     const resurrect = g.resurrect.bind(g);
     g.resurrect = () => { const was = self.p.ghost; resurrect(); if (was && !self.p.ghost) self.net.send({ t: 'rev', x: r1(self.p.pos.x), z: r1(self.p.pos.z) }); };

@@ -57,7 +57,7 @@ export class Unit {
 
   get alive() { return !this.dead; }
   get hpPct() { return this.hpMax ? this.hp / this.hpMax : 0; }
-  isEnemy(u) { return !!u && u !== this && (this.duelWith === u || (this.hostile !== u.hostile && u.kind !== 'critter' && u.kind !== 'npc')); } // duel opponents are enemies to each other alone
+  isEnemy(u) { return !!u && u !== this && (this.duelWith === u || (this.hostile !== u.hostile && u.kind !== 'critter' && u.kind !== 'npc' && u.kind !== 'node' && u.kind !== 'object')); } // duel opponents are enemies to each other alone
 
   recalc() {
     const g = this.gearStats, b = this.base;

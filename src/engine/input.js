@@ -2,6 +2,8 @@
 // While dragging, the cursor is locked (Pointer Lock) so you can keep turning past the screen edge, and it comes
 // back where it was when you let go, like WoW. Middle-click / Alt+click is a click too (waypoints). Touch on the canvas: one
 // finger orbits, two fingers pinch-zoom, a tap is a click flagged `touch` (the move stick lives in touch.js).
+const MB = b => (b & 1 ? 1 : 0) | (b & 2 ? 2 : 0); // mouse buttons we care about (left 1, right 2)
+
 export class Input {
   constructor(el) {
     this.el = el;
@@ -37,13 +39,16 @@ export class Input {
       el.setPointerCapture?.(e.pointerId);
       if (e.pointerType === 'touch') { this.touch = true; this.tp.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 }); if (this.tp.size === 2) { this._pinch = this.pinchDist(); this._pinched = true; } return; }
       if (e.button === 1) e.preventDefault();
-      this.buttons |= e.button === 0 ? 1 : e.button === 2 ? 2 : 0;
+      this.buttons = MB(e.buttons) || (e.button === 0 ? 1 : e.button === 2 ? 2 : 0);
       this._down = { x: e.clientX, y: e.clientY, button: e.button, t: performance.now() };
       if (e.button !== 1) this.dragDist = 0;
     });
     el.addEventListener('pointermove', e => {
       if (e.pointerType === 'touch') { this.touchMove(e); return; }
       this.mouse.x = e.clientX; this.mouse.y = e.clientY;
+      // a second button pressed or let go while one is held arrives here, not as pointerdown/up (chorded buttons):
+      // that's how "hold both buttons to run" works (only for presses that began on the game, not a drag out of a window)
+      if (this.buttons) { const b = MB(e.buttons); if (b !== this.buttons) { this.buttons = b; if (!b) this.endDrag(); } }
       if (!this.buttons) return;
       this.dragDist += Math.abs(e.movementX) + Math.abs(e.movementY);
       if (this.dragDist > 4 && !this.dragging) { this.dragging = true; el.style.cursor = 'none'; this.lock(); }
@@ -55,7 +60,7 @@ export class Input {
       if (this._down && this._down.button === e.button && (e.button === 1 || this.dragDist <= 4) && performance.now() - this._down.t < 450) {
         this.clicks.push({ button: e.button, x: this._down.x, y: this._down.y, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey });
       }
-      this.buttons &= ~b;
+      this.buttons = MB(e.buttons) & ~b;
       if (!this.buttons) this.endDrag();
     };
     el.addEventListener('pointerup', up);

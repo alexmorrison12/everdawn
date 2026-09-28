@@ -17,6 +17,19 @@ export class Window {
   toggle() { this.isOpen ? this.close() : this.open(); }
 }
 
+/** Drag an icon: a ghost follows the pointer; onDrop(clientX, clientY, elementsUnderneath) when you let go. */
+export function dragIcon(e, icon, onDrop) {
+  const ghost = h('img', 'evd-dragghost', document.body); ghost.src = iconURL(icon, 64);
+  const move = ev => { ghost.style.transform = `translate(${ev.clientX - 22}px, ${ev.clientY - 22}px)`; };
+  move(e);
+  const up = ev => {
+    removeEventListener('pointermove', move, true); removeEventListener('pointerup', up, true);
+    ghost.remove();
+    onDrop(ev.clientX, ev.clientY, document.elementsFromPoint(ev.clientX, ev.clientY));
+  };
+  addEventListener('pointermove', move, true); addEventListener('pointerup', up, true);
+}
+
 export function itemSlot(parent, cls = '') {
   const s = h('div', 'evd-slot ptr ' + cls, parent);
   s.img = h('img', 'ic', s);
@@ -97,7 +110,18 @@ export class Bags extends Window {
     this.foot = h('div', 'bfoot', this.el);
     this.free = h('span', 'bfree', this.foot);
     this.money = h('span', '', this.foot);
+    this.marks = h('span', 'bmarks', this.el); this.marks._tip = () => ({ type: 'text', title: 'Ember Marks', lines: ['Earned by killing the dragon of the Ember Maw. Spend them with the Quartermaster in Dawnhollow.'] });
     this.cells = [];
+  }
+  dropped(i, els) {
+    const j = this.cells.findIndex(c => els.includes(c));
+    if (j >= 0) { if (j !== i) this.ui.emit('bagMove', i, j); return; }
+    if (els.some(n => n.closest?.('.evd-win-merchant'))) { this.ui.emit('bagSell', i); return; }
+    if (els.some(n => n.closest?.('.evd-win-character'))) { this.ui.emit('useItem', i, this.cells[i]._item); return; }
+    const bar = els.find(n => n.classList?.contains('evd-abslot'));
+    if (bar) { const j = this.ui.actionBar.slots.findIndex(s => s.el === bar); if (j >= 0 && j < 10) this.ui.emit('barItem', j, i); return; } // usable items go on the bar
+    const top = els[0];
+    if (top && top.tagName === 'CANVAS' && !top.closest('.evd')) this.ui.emit('bagDestroy', i); // let go over the world
   }
   /** d: { slots: [ { item, count } | null ], money (copper), title? } */
   set(d) {
@@ -108,12 +132,22 @@ export class Bags extends Window {
       s._tip = () => s._item && { type: 'item', item: s._item };
       s.addEventListener('contextmenu', e => { e.preventDefault(); if (s._item) this.ui.emit('useItem', i, s._item); });
       s.addEventListener('click', e => { if (s._item && e.shiftKey) this.ui.emit('linkItem', s._item); });
+      // drag: onto another slot to move it, onto a merchant to sell, onto your character to wear it, into the world to destroy it
+      s.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || e.shiftKey || !s._item || e.pointerType === 'touch') return;
+        const x0 = e.clientX, y0 = e.clientY;
+        const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return; off(); dragIcon(ev, s._item.icon, (x, y, els) => this.dropped(i, els)); };
+        const off = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', off, true); };
+        addEventListener('pointermove', mv, true); addEventListener('pointerup', off, true);
+      });
       this.cells.push(s);
     }
     let used = 0;
     for (let i = 0; i < this.cells.length; i++) { show(this.cells[i], i < n); if (i < n) { fillSlot(this.cells[i], d.slots[i]); if (d.slots[i]) used++; } }
     setText(this.free, `${n - used} free`);
     this.money.textContent = ''; moneyEl(d.money || 0, this.money);
+    this.marks.textContent = ''; show(this.marks, !!d.marks);
+    if (d.marks) { h('img', '', this.marks).src = iconURL('emberMark', 32); this.marks.append(`${d.marks} Ember Marks`); }
   }
 }
 
@@ -169,9 +203,9 @@ export class WorldMap extends Window {
 
 // ------------------------------------------------------------------------------------ help / keybinds
 export const DEFAULT_BINDINGS = [
-  { title: 'Movement', rows: [['W,A,S,D', 'Move / turn'], ['Q,E', 'Strafe'], ['Space', 'Jump'], ['Left-drag', 'Orbit camera'], ['Right-drag', 'Steer'], ['Both buttons', 'Run forward'], ['Num Lock', 'Autorun'], ['Num /', 'Walk / run'], ['Wheel', 'Zoom']] },
+  { title: 'Movement', rows: [['W,A,S,D', 'Move / turn'], ['Q,E', 'Strafe'], ['Space', 'Jump'], ['Left-drag', 'Orbit camera'], ['Right-drag', 'Steer'], ['Both buttons', 'Run forward'], ['\\,Num Lock', 'Autorun'], ['Num /', 'Walk / run'], ['Wheel', 'Zoom']] },
   { title: 'Combat', rows: [['Tab', 'Target nearest enemy'], ['1,–,=', 'Action bar'], ['Right-click', 'Attack / interact'], ['Esc', 'Clear target / close'], ['F', 'Target of target']] },
-  { title: 'Interface', rows: [['C', 'Character'], ['B', 'Bags'], ['P', 'Spellbook'], ['L', 'Quest log'], ['O', 'Social / group'], ['M', 'World map'], ['N', 'Damage meter'], ['Middle-click', 'Waypoint for your group'], ['H', 'This help'], ['Enter', 'Chat']] },
+  { title: 'Interface', rows: [['C', 'Character'], ['B', 'Bags'], ['P', 'Spellbook'], ['L', 'Quest log'], ['K', 'Professions'], ['O', 'Social / group'], ['M', 'World map'], ['N', 'Damage meter'], ['Middle-click', 'Waypoint for your group'], ['H', 'This help'], ['Enter', 'Chat']] },
   { title: 'Chat', rows: [['/s,/y,/p', 'Say · Yell · Party'], ['/w Name', 'Whisper'], ['/r', 'Reply'], ['/invite', 'Invite to group'], ['/leave', 'Leave group'], ['/duel', 'Duel your target'], ['/1,/2,/4', 'General · Trade · LFG'], ['/logout', 'Log out']] },
 ];
 export class HelpOverlay extends Window {

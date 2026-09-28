@@ -19,6 +19,9 @@ import { openLobby, GuestBadge } from './net/lobby.js';
 import { canNetwork } from './net/peer.js';
 import { Interactions } from './game/interact.js';
 import { Waypoints, groundAt } from './game/waypoints.js';
+import { Professions } from './game/professions.js';
+import { Companions } from './game/companions.js';
+import { MARKS_PER_KILL } from './game/game.js';
 import { dailyDragon, AFFIXES } from './game/raid/daily.js';
 import { CinematicCam, TITLE_PATH, STAGE } from './game/cinematic.js';
 import { FX } from './fx/fx.js';
@@ -28,7 +31,7 @@ import { Flyover } from './game/flyover.js';
 import { M } from './world/heightfield.js';
 import { createModel, buildLog } from './models/factory.js';
 import { ground as modelGround, preloadCreatures, prewarmHumanoids, appearanceCounts } from './models/register.js';
-import { renderShareCard } from './ui/ui.js';
+import { renderShareCard, iconURL } from './ui/ui.js';
 import { store, serializeChar, submitKill, boards, parsePercentile, remoteSamples, challengeLink, readChallenge, fmtTime, setRemote, randomName } from './meta/meta.js';
 import { makeRemote, PUBLIC_URL } from './meta/remote.js';
 
@@ -98,6 +101,8 @@ class App {
     this.game.spawnNPCs(); mark('npcs');
     this.game.spawnCritters(); mark('critters');
     this.game.social.spawnPopulation(34); mark('simplayers');
+    this.prof = new Professions(this); this.companions = new Companions(this);
+    this.prof.spawnNodes(this.world, this.game.sim, 'vale'); mark('ore and herbs');
     this.flyover = new Flyover(this.game, this.dragon); mark('flyover');
     this.raiseStatue(); mark('statue');
     progress(0.97, 'Drawing the interface');
@@ -393,6 +398,7 @@ class App {
     this.forgetSession();
     // put the character away
     g.duels.forfeit(p);
+    this.companions.dismount(p); if (this.companions.pet) this.companions.togglePet(); this.prof.endFish(null);
     if (p.party) g.social.leave(p, true);
     this.interact.cancelTrade?.(); this.interact.closeMenu(); this.interact.closeWindow?.();
     this.waypoints.clearAll();
@@ -422,7 +428,7 @@ class App {
     this.ring.attach(this.raid.scene);
     this.cam.heightFn = (x, z) => this.raid.lair.heightAt(x, z);
     this.cam.boxes = null; this.cam._first = true; this.cam.yaw = 0; this.cam.pitch = 0.35; this.cam.distTarget = 11;
-    this.mode = 'raid'; this.raidDone = false; this.hud.raidTracker = false;
+    this.mode = 'raid'; this.raidDone = false; this.hud.raidTracker = false; this.companions.dismount(p); this.companions.reparent();
     this.ui.setHUDVisible(true);
     this.music('danger');
     this.dcam = this.dcam || new DirectorCam(this.camera); this.dcam.reset();
@@ -440,6 +446,7 @@ class App {
     const p = this.game.player, row = m.res.meter.find(r => r.name === p.name) || { dmg: 0, heal: 0, dead: false }, t = Math.max(1, m.res.killTime);
     const result = { killTime: m.res.killTime, attempts: m.res.attempts, meter: m.res.meter, loot: [], player: { dps: row.dmg / t, hps: row.heal / t, dmg: row.dmg, heal: row.heal, died: !!row.dead, avoidable: row.avoidable || 0, role: p.raidRole } };
     this.raid.result = result; this.raid.state = 'victory';
+    p.marks = (p.marks || 0) + MARKS_PER_KILL; bus.emit('marks', { amount: MARKS_PER_KILL }); bus.emit('chat', { ch: 'system', text: `You receive ${MARKS_PER_KILL} Ember Marks. Spend them with Quartermaster Brannoc in Dawnhollow.` });
     setTimeout(() => this.onVictory(result), 9000);
   }
   guestResultsClose() {
@@ -499,6 +506,7 @@ class App {
       g.refreshBar();
       p.hp = p.hpMax; p.power = p.powerType === 'rage' ? 0 : p.powerMax; p.dead = false; p.ghost = false; p.auras = []; p.target = null; p.casting = null;
       if (p.corpsePos) { p.corpsePos = null; }
+      this.companions.dismount(p); this.prof.endFish(null);
       G.uDesat.value = 0; this.renderer.F.uDesat.value = 0;
       const d = { ...this.dragon }; if (el) d.element = el;
       this.raid = new RaidState(this, { dragon: d, player: p, social: g.social, world: g, watch: !!this.watching, guests: this.net?.proxies() || [] });
@@ -516,7 +524,7 @@ class App {
       this.ring.attach(this.raid.scene);
       this.cam.heightFn = (x, z) => this.raid.lair.heightAt(x, z);
       this.cam.boxes = null; this.cam._first = true; this.cam.yaw = 0; this.cam.pitch = 0.35; this.cam.distTarget = 11;
-      this.mode = 'raid'; this.raidDone = false;
+      this.mode = 'raid'; this.raidDone = false; this.companions.reparent();
       this.hud.raidTracker = false;
       this.ui.screen(null); this.ui.setHUDVisible(true);
       this.music('danger');
@@ -540,7 +548,7 @@ class App {
     G.uFogDensity.value = 0.0016; G.uFogHeight.value = 0.012; G.uFogBase.value = 0;
     this.world.setTime(this.world.tod);
     this.raid = null;
-    this.mode = 'world';
+    this.mode = 'world'; this.companions.reparent();
     this.ui.screen(null); this.ui.setHUDVisible(true);
     this.hud.trackerDirty = true; this.hud.lastArea = null;
     this.music('vale');
@@ -558,6 +566,7 @@ class App {
     if (speedrun) p.speedrunDone = true;
     const entry = { day: d.day, at: Date.now(), name: p.name, cls: p.cls, race: p.race, role, guild: p.guild, element: d.element, killTime: result.killTime, dps: result.player.dps, hps: result.player.hps, attempts: result.attempts, deaths: result.player.died ? 1 : 0, avoidable: result.player.avoidable, speedrun, premade: !!p.jump, parse };
     const sub = await submitKill(entry);
+    this.net?.broadcast({ t: 'kills', l: [entry] }); this.guest?.net.send({ t: 'kills', l: [entry] }); // friends see it on their boards
     const b = await boards(d.day);
     const pos = (b.fastest || []).findIndex(r => r.name === p.name && Math.abs(r.killTime - result.killTime) < 1);
     this.lastEntry = entry;
@@ -659,6 +668,7 @@ class App {
     if (touchPlay !== this._touchPlaying) { this._touchPlaying = touchPlay; this.touch.setPlaying(touchPlay); }
     this.guest?.update(dt);
     st.update(dt);
+    this.prof.update(dt); this.companions.update(dt);
     this.net?.update(dt);
     if (this.mode === 'raid' && this.raid.state === 'victory' && !this.raidDone && this.raid.result && !this.raid.mirror) { this.raidDone = true; const res = this.raid.result; this.net?.raidVictory(res); setTimeout(() => this.watching ? this.endWatch(res) : this.onVictory(res), this.watching ? 14000 : 9000); }
     const focus = p.pos.clone(); focus.y += (p.height || 1.8) * 0.92;
@@ -727,6 +737,7 @@ class App {
 
 const appInst = new App();
 window.__game = appInst;
+window.__iconURL = iconURL; // debug: render any icon
 appInst.init().catch(e => { console.error(e); bootStage.textContent = 'Error: ' + e.message; });
 // Claude artifact viewers hot-swap a republished version into open pages: save first so the reload resumes the character.
 try { window.claude?.hot?.snapshot?.(() => { try { appInst.save(); } catch { /* not in a saveable state */ } return {}; }); } catch { /* not in a viewer */ }

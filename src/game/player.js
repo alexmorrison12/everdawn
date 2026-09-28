@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { SPELLS } from './data/spells.js';
 import { bus } from './events.js';
+import { MOUNTS } from './companions.js';
 
 const KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0', 'Minus', 'Equal'];
 // WoW's numbers (yards ≈ metres): run 7, backpedal 4.5, walk 2.5, swim 4.72, keyboard turn 180°/s, jump ~1.6 m
@@ -31,7 +32,7 @@ export class PlayerController {
     const stunned = u.flag('stun'), rooted = u.flag('root') || stunned, feared = u.flag('fear');
     const steer = (I.buttons & 2) !== 0, orbiting = (I.buttons & 1) !== 0 && !steer;
     let f = 0, s = 0;
-    if (I.hit('NumLock') || I.hit('Backquote')) this.autorun = !this.autorun;
+    if (I.hit('NumLock') || I.hit('Backslash') || I.hit('Backquote')) this.autorun = !this.autorun; // WoW: Num Lock or \
     if (I.hit('NumpadDivide')) { this.walking = !this.walking; bus.emit('chat', { ch: 'system', text: this.walking ? 'You are now walking.' : 'You are now running.' }); }
     if (I.down('KeyW') || I.down('ArrowUp') || I.buttons === 3) { f += 1; this.autorun = false; }
     if (I.down('KeyS') || I.down('ArrowDown')) { f -= 1; this.autorun = false; }
@@ -61,7 +62,7 @@ export class PlayerController {
       else if (d > 3.2 && !stunned && !feared) { u.facing = Math.atan2(-fx, -fz); f = 1; }
     }
     let speed = u.swimming ? (f < 0 ? SWIM_BACK : SWIM) : this.walking ? (f < 0 ? WALK_BACK : WALK) : (f < 0 ? BACK : RUN);
-    speed *= partial * u.mod('speed') * (this.mounted && !u.swimming ? 1.6 : 1);
+    speed *= partial * u.mod('speed') * (u.mount && !u.swimming ? MOUNTS[u.mount].speed : 1);
     if (feared) { f = 1; s = 0; if (!this.fearA || Math.random() < dt) this.fearA = Math.random() * Math.PI * 2; u.facing = this.fearA; }
     const fx = -Math.sin(u.facing), fz = -Math.cos(u.facing);
     const rx = -fz, rz = fx;
@@ -130,6 +131,8 @@ export class PlayerController {
   /** Use an ability (from the bar, or clicked in the spellbook). */
   castSpell(id, i = -1) {
     const sp = SPELLS[id]; if (!sp) return;
+    if (sp.prof) { const pr = this.g.e?.prof; return id === 'fishing' ? pr?.fish() : id === 'campfire' ? pr?.campfire() : false; } // professions
+    if (this.u.mount) this.g.e?.companions?.dismount(this.u); // attacking or casting gets you off your mount
     if (sp.learn > this.u.level) { bus.emit('error', { unit: this.u, msg: 'You have not learned that ability yet' }); return; }
     const u = this.u;
     if ((sp.cast || sp.channel) && this.moving && !(sp.instantWith && u.hasAura(sp.instantWith))) { bus.emit('error', { unit: u, msg: "Can't do that while moving" }); return false; }
@@ -150,6 +153,7 @@ export class PlayerController {
 
   startAttack() {
     const u = this.u;
+    if (u.mount) this.g.e?.companions?.dismount(u);
     if (u.cls === 'warrior' || u.cls === 'rogue' || u.cls === 'paladin') { u.autoAttack = true; u.swingT = Math.min(u.swingT, 0.3); }
   }
 
@@ -205,6 +209,8 @@ export class PlayerController {
   click(c) {
     if (c.x === undefined) return;
     if (c.button === 1 || (c.button === 0 && c.alt)) { this.g.e?.markAt?.(c.x, c.y); return; } // middle-click / Alt+click: waypoint
+    const hit = this.pick(c.x, c.y);
+    if (hit && (hit.kind === 'node' || hit.kind === 'object') && (c.button === 2 || c.touch)) { this.g.e?.prof?.interact(hit); return; } // ore, herbs, the bobber
     const o = this.pick(c.x, c.y);
     const u = this.u;
     // touch has no right button: tapping the current target (or any NPC or lootable corpse) acts on it
