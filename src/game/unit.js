@@ -43,7 +43,8 @@ export class Unit {
     this.dead = false; this.deadT = 0;
     this.model = null;          // rig from models/*
     this.brain = null;          // AI controller
-    this.party = null;          // Party
+    this.party = null;          // Party (game/party.js)
+    this.duel = null; this.duelWith = null; // game/duel.js: the duel you're in, and your opponent once it has begun
     this.spells = o.spells || [];
     this.lastDamagedBy = null;
     this.tapper = null;         // who gets credit (first damager's party); UI reads the boolean `tapped`
@@ -56,7 +57,7 @@ export class Unit {
 
   get alive() { return !this.dead; }
   get hpPct() { return this.hpMax ? this.hp / this.hpMax : 0; }
-  isEnemy(u) { return !!u && u !== this && this.hostile !== u.hostile && u.kind !== 'critter' && u.kind !== 'npc'; }
+  isEnemy(u) { return !!u && u !== this && (this.duelWith === u || (this.hostile !== u.hostile && u.kind !== 'critter' && u.kind !== 'npc')); } // duel opponents are enemies to each other alone
 
   recalc() {
     const g = this.gearStats, b = this.base;

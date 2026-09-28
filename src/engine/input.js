@@ -1,5 +1,6 @@
 // Keyboard + mouse + touch state. WoW-style: LMB drag orbits camera, RMB drag steers, both buttons run forward.
-// Pointer capture keeps drags alive outside the canvas; the cursor hides while dragging. Touch on the canvas: one
+// While dragging, the cursor is locked (Pointer Lock) so you can keep turning past the screen edge, and it comes
+// back where it was when you let go, like WoW. Middle-click / Alt+click is a click too (waypoints). Touch on the canvas: one
 // finger orbits, two fingers pinch-zoom, a tap is a click flagged `touch` (the move stick lives in touch.js).
 export class Input {
   constructor(el) {
@@ -14,6 +15,7 @@ export class Input {
     this.enabled = true;
     this.typing = false;          // chat box focus
     this.pointerLock = false;
+    this.lockOk = true;           // settings: lock the cursor while turning
     this._down = null;
     this.touch = false;                                   // a touch has happened (touch UI is on)
     this.stick = { x: 0, y: 0, active: false };          // virtual move stick, -1..1 (screen axes)
@@ -29,27 +31,29 @@ export class Input {
     window.addEventListener('keyup', e => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.buttons = 0; this.endDrag(); });
     el.addEventListener('contextmenu', e => e.preventDefault());
+    el.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no autoscroll on middle-click
     el.addEventListener('pointerdown', e => {
       if (!this.enabled) return;
       el.setPointerCapture?.(e.pointerId);
       if (e.pointerType === 'touch') { this.touch = true; this.tp.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now(), moved: 0 }); if (this.tp.size === 2) { this._pinch = this.pinchDist(); this._pinched = true; } return; }
+      if (e.button === 1) e.preventDefault();
       this.buttons |= e.button === 0 ? 1 : e.button === 2 ? 2 : 0;
       this._down = { x: e.clientX, y: e.clientY, button: e.button, t: performance.now() };
-      this.dragDist = 0;
+      if (e.button !== 1) this.dragDist = 0;
     });
     el.addEventListener('pointermove', e => {
       if (e.pointerType === 'touch') { this.touchMove(e); return; }
       this.mouse.x = e.clientX; this.mouse.y = e.clientY;
       if (!this.buttons) return;
       this.dragDist += Math.abs(e.movementX) + Math.abs(e.movementY);
-      if (this.dragDist > 4 && !this.dragging) { this.dragging = true; el.style.cursor = 'none'; }
+      if (this.dragDist > 4 && !this.dragging) { this.dragging = true; el.style.cursor = 'none'; this.lock(); }
       if (this.dragging) { this.dragDX += e.movementX; this.dragDY += e.movementY; }
     });
     const up = e => {
       if (e.pointerType === 'touch') { this.touchUp(e); return; }
       const b = e.button === 0 ? 1 : e.button === 2 ? 2 : 0;
-      if (this._down && this._down.button === e.button && this.dragDist <= 4 && performance.now() - this._down.t < 450) {
-        this.clicks.push({ button: e.button, x: e.clientX, y: e.clientY, shift: e.shiftKey, ctrl: e.ctrlKey });
+      if (this._down && this._down.button === e.button && (e.button === 1 || this.dragDist <= 4) && performance.now() - this._down.t < 450) {
+        this.clicks.push({ button: e.button, x: this._down.x, y: this._down.y, shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey });
       }
       this.buttons &= ~b;
       if (!this.buttons) this.endDrag();
@@ -72,7 +76,12 @@ export class Input {
     if (this.tp.size < 2) this._pinch = 0;
     if (!this.tp.size) { this._pinched = false; this.endDrag(); }
   }
-  endDrag() { this.dragging = false; this.el.style.cursor = ''; }
+  endDrag() { this.dragging = false; this.el.style.cursor = ''; if (document.pointerLockElement === this.el) document.exitPointerLock?.(); }
+  /** Lock the cursor for a mouse drag (turn without hitting the screen edge). Needs a recent click, which a drag has. */
+  lock() {
+    if (!this.lockOk || this.touch || document.pointerLockElement === this.el || !this.el.requestPointerLock) return;
+    try { const p = this.el.requestPointerLock({ unadjustedMovement: false }); p?.catch?.(() => {}); } catch { /* sandboxed frame: drag unlocked */ }
+  }
   down(code) { return this.enabled && !this.typing && this.keys.has(code); }
   hit(code) { return this.enabled && !this.typing && this.pressed.has(code); }
   consumeDrag() { const d = [this.dragDX, this.dragDY]; this.dragDX = this.dragDY = 0; return d; }

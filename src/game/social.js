@@ -10,6 +10,7 @@ import { bus } from './events.js';
 import { RNG } from '../core/noise.js';
 import { Voices } from './voices.js';
 import { areaAt } from './map.js';
+import { Party, isHuman } from './party.js';
 
 const VIS_CLASSES = ['warrior', 'mage', 'priest', 'rogue', 'hunter', 'paladin', 'warrior', 'mage', 'priest'];
 const RACE_KEYS = Object.keys(RACES);
@@ -24,7 +25,7 @@ export class Social {
     this.names = new Set();
     this.chatT = 2.5; this.eerieT = 150 + this.rng.next() * 150; this.whisperT = 40 + this.rng.next() * 40; this.inviteT = 70 + this.rng.next() * 60;
     this.guild = null; this.guildOfferT = 120 + this.rng.next() * 90;
-    this.party = null;
+    this.invites = new Map(); // invitee → { from, t }: group invitations waiting for an answer
     this.queue = []; // delayed actions {t, fn}
     this.lastWhisperFrom = null;
     this.pendingPopup = null;
@@ -165,7 +166,7 @@ export class Social {
 
   react(kind, chance = 0.8, chans = null) {
     const rng = this.rng;
-    const who = this.party ? this.party.members : [];
+    const who = this.party ? this.party.members.filter(m => m.kind === 'sim') : []; // a friend's lines are their own
     const guildies = this.guild ? this.sims.filter(s => s.guild === this.guild && !s.dead) : [];
     const pool = [...who.map(w => ['party', w]), ...guildies.slice(0, 6).map(w => ['guild', w])];
     rng.shuffle(pool);
@@ -195,39 +196,123 @@ export class Social {
   }
 
   // ------------------------------------------------------------ parties
-  ensureParty() {
-    if (!this.party) { this.party = { members: [], leaderIsPlayer: true }; this.g.player.party = this.party; }
-    return this.party;
+  // This browser decides who is grouped with whom (solo, or hosting co-op); a friend's requests arrive from
+  // net/host.js as the same calls, and `tell` reaches their chat through the host's relay.
+  get party() { return this.g.player?.party || null; }
+  set party(v) { if (this.g.player) this.g.player.party = v; }
+  tell(u, text) {
+    if (!u) return;
+    if (u === this.g.player) this.post('system', null, text);
+    else if (u.kind === 'remote' && u.remote) bus.emit('chat', { ch: 'system', text, hideLocal: true, $toGuest: u.remote });
   }
-  addToParty(s) {
-    const p = this.ensureParty();
-    if (p.members.includes(s) || p.members.length >= 4) return false;
-    p.members.push(s); s.party = p;
-    s.brain.set('follow');
-    this.post('system', null, `${s.name} joins the party.`);
-    bus.emit('party_changed', { party: p });
+  tellParty(p, text, except = null) { for (const m of p.humans()) if (m !== except) this.tell(m, text); }
+  /** A sim's whisper to a human (yours shows here, a friend's goes to their browser). */
+  whisperTo(u, sim, text) {
+    if (u === this.g.player) { this.post('whisper', sim, text, { to: 'you' }); this.lastWhisperFrom = sim; }
+    else if (u?.kind === 'remote') this.post('whisper', sim, text, { to: u.name, hideLocal: true, $toGuest: u.remote });
+  }
+
+  invite(from, to) {
+    if (!from || !to || to === from) return;
+    const p = from.party;
+    if (to.party && to.party === p) return this.tell(from, `${to.name} is already in your group.`);
+    if (to.party) return this.tell(from, `${to.name} is already in a group.`);
+    if (p?.full) return this.tell(from, 'Your party is full.');
+    const pending = this.invites.get(to);
+    if (pending && pending.from !== from) return this.tell(from, `${to.name} is considering another invitation.`);
+    this.tell(from, `You have invited ${to.name} to join your group.`);
+    this.invites.set(to, { from, t: 60 });
+    if (to.kind === 'sim') {
+      this.later(1 + this.rng.next() * 2.5, () => {
+        if (this.invites.get(to)?.from !== from) return;
+        if (!to.dead && this.rng.next() < (to.persona.arch === 'afk' ? 0.2 : 0.8)) { if (this.acceptInvite(to)) this.later(0.8, () => this.post('party', to, pick(this.rng, REACT.inviteYes))); }
+        else { this.declineInvite(to); this.whisperTo(from, to, pick(this.rng, REACT.inviteNo)); }
+      });
+    } else if (to === this.g.player) bus.emit('popup', { kind: 'invite', from: from.name, onAccept: () => this.acceptInvite(to), onDecline: () => this.declineInvite(to) });
+    else if (to.kind === 'remote') this.g.e?.net?.partyInvite?.(to, from);
+  }
+  acceptInvite(to) {
+    const inv = this.invites.get(to); if (!inv) return false;
+    this.invites.delete(to);
+    const from = inv.from;
+    if (to.party) { this.tell(to, 'You are already in a group.'); return false; }
+    if (from.kind === 'remote' && !this.g.e?.net?.proxies?.().includes(from)) { this.tell(to, `${from.name} is no longer online.`); return false; }
+    let p = from.party;
+    if (!p) { p = new Party(from); from.party = p; }
+    if (p.full) { this.tell(to, 'That group is full.'); return false; }
+    this.join(p, to);
     return true;
   }
-  removeFromParty(s, reason) {
-    const p = this.party; if (!p) return;
-    p.members = p.members.filter(m => m !== s); s.party = null; s.brain?.choose();
-    this.post('system', null, `${s.name} leaves the party.`);
-    if (!p.members.length) { this.g.player.party = null; this.party = null; this.post('system', null, 'Your group has been disbanded.'); }
-    bus.emit('party_changed', { party: this.party });
+  declineInvite(to) {
+    const inv = this.invites.get(to); if (!inv) return;
+    this.invites.delete(to);
+    this.tell(inv.from, `${to.name} declines your group invitation.`);
   }
+  /** Put u in group p (leaving any other group first). A SimPlayer's group is led by the first human who joins it. */
+  join(p, u, { quiet = false } = {}) {
+    if (!p || u.party === p) return;
+    if (u.party) this.leave(u, true);
+    p.all.push(u); u.party = p;
+    if (!isHuman(p.leader) && isHuman(u)) p.leader = u;
+    if (!quiet) {
+      for (const m of p.humans()) if (m !== u) this.tell(m, `${u.name} joins the party.`);
+      if (isHuman(u)) this.tell(u, p.leader === u ? 'You are now the group leader.' : `You join ${p.leader.name}'s group.`);
+    }
+    for (const m of p.all) if (m.kind === 'sim' && m.brain?.act !== 'follow') m.brain?.set('follow');
+    this.changed();
+  }
+  leave(u, quiet = false) {
+    const p = u?.party; if (!p) return;
+    p.all = p.all.filter(m => m !== u); u.party = null;
+    this.invites.delete(u);
+    if (u.kind === 'sim') u.brain?.choose();
+    if (!quiet) { this.tell(u, 'You leave the group.'); this.tellParty(p, `${u.name} leaves the party.`); }
+    if (p.all.length < 2 || !p.humans().some(m => !m.offline)) { this.disband(p, u); return; } // nobody left who is here
+    if (p.leader === u) { p.leader = p.humans().find(m => !m.offline) || p.humans()[0]; this.tellParty(p, `${p.leader.name} is now the group leader.`); }
+    this.changed();
+  }
+  disband(p, last = null) {
+    const left = [...p.all];
+    p.all = [];
+    for (const m of left) { m.party = null; if (m.kind === 'sim') m.brain?.choose(); else this.tell(m, 'Your group has been disbanded.'); }
+    // mobs the group had tagged stay tagged by whoever was left holding it (not by a group nobody is in)
+    const heir = left.find(isHuman) || left[0] || last;
+    for (const s of [this.g.sim, this.g.e?.raid?.sim]) for (const m of s?.units || []) if (m.tapper === p) m.tapper = heir;
+    this.changed();
+  }
+  kick(by, u) {
+    const p = by?.party;
+    if (!u || !p || u.party !== p) return this.tell(by, `${u?.name || 'That player'} is not in your group.`);
+    if (u === by) return this.leave(by);
+    if (p.leader !== by) return this.tell(by, 'You are not the party leader.');
+    this.tell(u, 'You have been removed from the group.');
+    this.leave(u, true);
+    if (p.all.length) this.tellParty(p, `${u.name} has been removed from the group.`);
+  }
+  promote(by, u) {
+    const p = by?.party;
+    if (!u || !p || u.party !== p) return this.tell(by, `${u?.name || 'That player'} is not in your group.`);
+    if (p.leader !== by) return this.tell(by, 'You are not the party leader.');
+    if (!isHuman(u)) return this.tell(by, `${u.name} doesn't want to lead.`);
+    p.leader = u; this.tellParty(p, `${u.name} is now the group leader.`); this.changed();
+  }
+  changed() { bus.emit('party_changed', { party: this.party }); }
   invitePlayer(s) { // a SimPlayer invites you
-    if (this.party && this.party.members.length >= 4) return;
-    bus.emit('popup', { kind: 'invite', from: s.name, text: `${s.name} invites you to a group.`, onAccept: () => { this.addToParty(s); this.later(1.5, () => this.post('party', s, pick(this.rng, ['hi!', 'o/', 'lets gooo', 'ty for joining', 'what quest u on?']))); }, onDecline: () => this.later(1, () => this.post('whisper', s, pick(this.rng, ['k', 'ok :(', 'np', 'rude']), { to: 'you' })) });
+    const p = this.g.player;
+    if (!p || p.party || s.party || this.invites.has(p)) return;
+    this.invites.set(p, { from: s, t: 60 });
+    bus.emit('popup', { kind: 'invite', from: s.name, onAccept: () => { if (this.acceptInvite(p)) this.later(1.5, () => this.post('party', s, pick(this.rng, ['hi!', 'o/', 'lets gooo', 'ty for joining', 'what quest u on?']))); }, onDecline: () => { this.declineInvite(p); this.later(1, () => this.whisperTo(p, s, pick(this.rng, ['k', 'ok :(', 'np', 'rude']))); } });
   }
   playerInvite(name) {
-    const s = this.findSim(name);
-    if (!s) return this.post('system', null, `No player named '${name}' is currently playing.`);
-    if (s.party === this.party && this.party) return this.post('system', null, `${s.name} is already in your group.`);
-    this.post('system', null, `You have invited ${s.name} to join your group.`);
-    this.later(1 + this.rng.next() * 2.5, () => {
-      if (this.rng.next() < (s.persona.arch === 'afk' ? 0.2 : 0.8)) { this.addToParty(s); this.post('party', s, pick(this.rng, REACT.inviteYes)); }
-      else { this.post('system', null, `${s.name} declines your group invitation.`); this.post('whisper', s, pick(this.rng, REACT.inviteNo), { to: 'you' }); }
-    });
+    const p = this.g.player, s = this.findPlayer(name);
+    if (!s || s === p) return this.post('system', null, name ? `No player named '${name}' is currently playing.` : 'Invite whom? Type /invite and a name, or right-click a player.');
+    this.invite(p, s);
+  }
+  /** SimPlayers, co-op friends and you, by name (a unique prefix of three letters or more is enough). */
+  findPlayer(name) {
+    name = String(name || '').trim().toLowerCase(); if (!name) return null;
+    const people = [this.g.player, ...this.sims, ...this.g.sim.units.filter(u => u.kind === 'remote')].filter(Boolean);
+    return people.find(s => s.name.toLowerCase() === name) || (name.length >= 3 ? people.find(s => s.name.toLowerCase().startsWith(name)) : null) || null;
   }
   findSim(name) { name = (name || '').toLowerCase(); return this.sims.find(s => s.name.toLowerCase() === name) || this.sims.find(s => s.name.toLowerCase().startsWith(name) && name.length >= 3); }
 
@@ -250,14 +335,19 @@ export class Social {
         case 'w': case 'whisper': case 't': case 'tell': case 'msg': { const [nm, ...m] = rest; to = this.findSim(nm); if (!to) return this.post('system', null, `No player named '${nm}' is currently playing.`); ch = 'whisper_out'; text = m.join(' '); break; }
         case 'r': case 'reply': to = this.lastWhisperFrom; if (!to) return; ch = 'whisper_out'; text = arg; break;
         case 'invite': case 'inv': return this.playerInvite(arg || this.g.player.target?.name);
-        case 'leave': case 'leaveparty': if (this.party) { for (const m of [...this.party.members]) this.removeFromParty(m); } return;
+        case 'leave': case 'leaveparty': if (!this.party) return this.post('system', null, 'You aren\'t in a group.'); return this.leave(p);
+        case 'kick': case 'uninvite': case 'u': return this.kick(p, this.findPlayer(arg) || (arg ? null : p.target));
+        case 'promote': case 'pr': return this.promote(p, this.findPlayer(arg) || (arg ? null : p.target));
+        case 'logout': case 'camp': case 'quit': case 'exit': return this.g.e?.logout?.();
+        case 'clearwaypoint': case 'cwp': return this.g.e?.waypoints?.clearMine();
         case 'who': return this.who(arg);
         case 'played': return this.post('system', null, `Total time played: ${(4380 + Math.floor(this.g.time / 86400))} days, 3 hours, ${Math.floor(this.g.time / 60)} minutes`);
         case 'roll': { const max = parseInt(arg) || 100; return this.post('system', null, `${p.name} rolls ${1 + Math.floor(this.rng.next() * max)} (1-${max})`); }
-        case 'duel': return this.g.duels?.challenge(this.g.player.target);
+        case 'duel': { const t = arg ? this.findPlayer(arg) : p.target; if (!t) return this.post('system', null, arg ? `No player named '${arg}' is currently playing.` : 'Target a player to challenge them to a duel.'); return this.g.duels?.challenge(p, t); }
+        case 'yield': case 'forfeit': return this.g.duels?.forfeit(p);
         case 'host': if (!this.g.e.startHosting?.()) this.post('system', null, this.g.e.net ? 'You are already hosting.' : 'Hosting is available on the web version of the game.'); return;
         case 'afk': return this.post('system', null, 'You are now AFK: Away from Keyboard');
-        case 'help': case 'h': return this.post('system', null, 'Commands: /s /y /p /g /1 /2 /4 /w <name> /r /invite <name> /leave /who /roll /played /host /dance /wave /cheer /laugh /bow /point /roar /kneel');
+        case 'help': case 'h': return this.post('system', null, 'Commands: /s /y /p /g /1 /2 /4 /w <name> /r /invite <name> /leave /kick <name> /promote <name> /duel <name> /yield /who /roll /played /host /logout /dance /wave /cheer /laugh /bow /point /roar /kneel');
         default: return this.post('system', null, `Unknown command: /${cmd}`);
       }
     }
@@ -289,13 +379,13 @@ export class Social {
         const t0 = performance.now();
         this.voices.reply(s, text, vch, this.voiceContext()).then(line => this.later(Math.max(0.3, 1.2 - (performance.now() - t0) / 1000), () => deliver(line || canned)));
       } else this.later(1.2 + this.rng.next() * 3 + rs.indexOf(s), () => deliver(canned));
-      if (rule?.k.includes('duel') && ch === 'whisper_out') this.later(3, () => this.g.duels?.request(s));
+      if (rule?.k.includes('duel') && ch === 'whisper_out') this.later(3, () => this.g.duels?.challenge(s, p));
     }
   }
   /** SimPlayers answer a co-op friend (net/host.js): the same canned rules as playerChat, addressed to them. */
   replyTo(speaker, ch, text, to) {
     const lower = String(text).toLowerCase();
-    const responders = ch === 'whisper_out' ? [to] : ch === 'say' || ch === 'yell' ? this.g.sim.query(speaker.pos, ch === 'yell' ? 60 : 22).filter(u => u.kind === 'sim') : ch === 'general' || ch === 'trade' || ch === 'lfg' ? this.sims : [];
+    const responders = ch === 'whisper_out' ? [to] : ch === 'say' || ch === 'yell' ? this.g.sim.query(speaker.pos, ch === 'yell' ? 60 : 22).filter(u => u.kind === 'sim') : ch === 'general' || ch === 'trade' || ch === 'lfg' ? this.sims : ch === 'party' ? (speaker.party?.all || []).filter(u => u.kind === 'sim') : [];
     const n = ch === 'whisper_out' ? 1 : Math.min(responders.length, 1 + Math.floor(this.rng.next() * 2));
     for (const s of this.rng.shuffle([...responders]).slice(0, n)) {
       if (!s || s.dead || s.kind !== 'sim') continue;
@@ -359,7 +449,7 @@ export class Social {
     this.inviteT -= dt;
     if (this.inviteT <= 0 && !away) {
       this.inviteT = 110 + rng.next() * 120;
-      if (!this.party || this.party.members.length < 2) {
+      if (!this.party) {
         const near = this.g.sim.query(p.pos, 45).filter(u => u.kind === 'sim' && !u.dead && !u.party && Math.abs(u.level - p.level) <= 3);
         const s = pick(rng, near);
         if (s) this.invitePlayer(s);
@@ -378,10 +468,12 @@ export class Social {
       }
     }
     // party members eventually leave
-    if (this.party) for (const m of this.party.members) {
+    for (const party of new Set(this.sims.map(s => s.party).filter(Boolean))) for (const m of party.all) {
+      if (m.kind !== 'sim') continue; // only SimPlayers wander off; people leave when they choose to
       m.partyT = (m.partyT || 0) + dt;
-      if (m.partyT > 360 + (m.id % 7) * 60 && !m.inCombat && rng.next() < dt * 0.02) { this.post('party', m, pick(rng, REACT.bye)); this.later(2, () => this.removeFromParty(m)); }
+      if (m.partyT > 360 + (m.id % 7) * 60 && !m.inCombat && rng.next() < dt * 0.02) { m.partyT = -1e9; this.post('party', m, pick(rng, REACT.bye)); this.later(2, () => { m.partyT = 0; if (m.party === party) this.leave(m); }); }
     }
+    for (const [u, inv] of this.invites) if ((inv.t -= dt) <= 0) this.invites.delete(u);
     for (const s of this.sims) if (s.dancing && (s.stateAnim.speed > 0.1 || s.inCombat)) s.dancing = false;
   }
 

@@ -16,6 +16,7 @@ import { Alerts } from './alerts.js';
 import { BossTimers, Meter } from './bosstimers.js';
 import { Popups, LootWindow, RollFrames, QuestDialog, DeathOverlay } from './dialogs.js';
 import { CharacterPanel, Bags, WorldMap, HelpOverlay, Settings } from './panels.js';
+import { SpellBook, QuestLog, SocialPanel, Merchant, enableBarDrag } from './books.js';
 import { LoginScreen, CreateScreen, ResultsScreen, LoadingScreen } from './screens.js';
 
 export { iconURL, iconCanvas } from './icons.js';
@@ -96,6 +97,11 @@ export class UI {
     this.bags = new Bags(this, win);
     this.worldMap = new WorldMap(this, win);
     this.help = new HelpOverlay(this, win);
+    this.spellbook = new SpellBook(this, win);
+    this.questLog = new QuestLog(this, win);
+    this.social = new SocialPanel(this, win);
+    this.merchant = new Merchant(this, win);
+    this.character.dock = true;
     this.loot = new LootWindow(this, win);
     this.popups = new Popups(this, this.modalLayer); // above screens too: the title's "Continue as…?" prompt must be visible
     // screens
@@ -108,6 +114,7 @@ export class UI {
     this.tooltip = new Tooltip(this, this.topLayer);
 
     this.on('micro', id => this._micro(id));
+    enableBarDrag(this);
     this._bindPointer();
     this._onKey = e => this._key(e);
     addEventListener('keydown', this._onKey);
@@ -157,11 +164,16 @@ export class UI {
   _screenHidden(s) { this._screens.delete(s); this._applyHUD(); }
 
   // ------------------------------------------------------------------ panels
-  _panelOpened(p, id) { installArtLate(this.root); this._open = this._open.filter(x => x !== p); this._open.push(p); this.micro.setActive(id, true); this.emit('panel', id, true); }
-  _panelClosed(p, id) { this._open = this._open.filter(x => x !== p); this.micro.setActive(id, false); this.emit('panel', id, false); }
-  /** Toggle a panel by name: character | bags | map | help | settings | meter */
+  _panelOpened(p, id) { installArtLate(this.root); this._open = this._open.filter(x => x !== p); this._open.push(p); this._layout(); this.micro.setActive(id, true); this.emit('panel', id, true); }
+  _panelClosed(p, id) { this._open = this._open.filter(x => x !== p); this._layout(); this.micro.setActive(id, false); this.emit('panel', id, false); }
+  /** Docked windows (Character, Spellbook, Quest Log, Social, Merchant) sit side by side from the left, WoW style. */
+  _layout() {
+    let x = 56; const room = this.winLayer.offsetWidth || innerWidth;
+    for (const p of this._open) if (p.dock) { const w = p.el.offsetWidth; p.el.style.left = Math.max(8, Math.min(x, room - w - 8)) + 'px'; x += w + 12; }
+  }
+  /** Toggle a panel by name: character | bags | spellbook | quests | social | map | help | settings | meter */
   toggle(name) {
-    const p = { character: this.character, bags: this.bags, map: this.worldMap, help: this.help, settings: this.settings }[name];
+    const p = { character: this.character, bags: this.bags, spellbook: this.spellbook, quests: this.questLog, social: this.social, map: this.worldMap, help: this.help, settings: this.settings }[name];
     if (p) p.toggle();
     else if (name === 'meter') { const on = this.meter.el.classList.toggle('hidden'); this.micro.setActive('meter', !on); }
   }
@@ -172,7 +184,7 @@ export class UI {
     if (p.close) p.close(true);
     return true;
   }
-  _micro(id) { if (id === 'spellbook' || id === 'quests') this.emit('open', id); else this.toggle(id); }
+  _micro(id) { this.toggle(id); }
 
   // ------------------------------------------------------------------ input
   _key(e) {
@@ -189,7 +201,7 @@ export class UI {
       this.emit('escape');
       return;
     }
-    const map = { KeyC: 'character', KeyB: 'bags', KeyM: 'map', KeyH: 'help', KeyN: 'meter' };
+    const map = { KeyC: 'character', KeyB: 'bags', KeyP: 'spellbook', KeyL: 'quests', KeyO: 'social', KeyM: 'map', KeyH: 'help', KeyN: 'meter' };
     const name = map[e.code];
     if (name && !e.repeat) { this.toggle(name); e.preventDefault(); }
   }

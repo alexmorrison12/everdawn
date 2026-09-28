@@ -10,6 +10,8 @@ import { SPELLS, AURAS, GCD } from '../game/data/spells.js';
 import { ITEMS } from '../game/items.js';
 import { GuestTransport } from './peer.js';
 import { dec, spellIn } from './codec.js';
+import { Party } from '../game/party.js';
+import { duelFlag } from '../game/duel.js';
 
 const SEND_EVERY = 1 / 15;
 const OTHER = { name: 'someone else', kind: 'other' };  // tapper stand-in: somebody outside your group
@@ -77,6 +79,16 @@ export class GuestSession {
       case 'inspect': this.app.interact?.showInspect(m.data); return;
       case 'trade': this.app.interact?.onTrade(this.resolve(m.from), m.m); return;
       case 'full': this.app.ui.alerts.error('That world is full (4 friends max).'); return;
+      case 'pinv': bus.emit('popup', { kind: 'invite', from: m.from, onAccept: () => this.partyOp('accept'), onDecline: () => this.partyOp('decline') }); return;
+      case 'dreq': bus.emit('popup', { kind: 'duel', from: m.from, onAccept: () => this.duelOp('accept'), onDecline: () => this.duelOp('decline') }); return;
+      case 'closing': {
+        this.closed = true; clearTimeout(this.retryT);
+        const who = m.host || this.hostName;
+        this.app.guestBadge?.set('World closed');
+        bus.emit('chat', { ch: 'system', text: `${who} closed their world.` });
+        this.app.ui.popups.show({ id: 'closing', text: `**${who}** closed their world. Your character is saved.`, accept: 'Return to Title', decline: null, onAccept: () => this.app.logout?.({ force: true }) });
+        return;
+      }
     }
   }
   hello() {
@@ -159,13 +171,43 @@ export class GuestSession {
     const keep = p.auras.filter(a => a.id === 'ghost');
     p.auras = [...keep, ...me.au.map(([id, rem, dur, sk, abs, src]) => ({ id, def: AURAS[id] || { name: id }, rem, dur, stacks: sk, absorb: abs, src: this.resolve(src), opts: {} }))];
     p.autoAttack = !!me.aa;
+    this.duelState(me.du);
   }
+  // "leaderId;id,id,…" (you included) or '' when you're not in a group
   party(list) {
-    const soc = this.g.social, ids = list ? String(list).split(',').map(Number) : [];
-    const members = ids.map(id => this.units.get(id)).filter(Boolean);
-    if (!members.length) { soc.party = null; if (this.p) this.p.party = null; }
-    else { soc.party = { members, leaderIsPlayer: false }; if (this.p) this.p.party = soc.party; for (const m of members) m.party = soc.party; }
-    bus.emit('party_changed', { party: soc.party });
+    const p = this.p, [lead, ids] = String(list || '').split(';');
+    const all = (ids ? ids.split(',').map(Number) : []).map(id => this.resolve(id)).filter(Boolean);
+    for (const u of this.units.values()) if (u.party && !all.includes(u)) u.party = null;
+    if (!p) return;
+    if (all.length < 2 || !all.includes(p)) p.party = null;
+    else {
+      const party = p.party instanceof Party ? p.party : new Party(null); // one object while the group lasts
+      party.all = all; party.leader = this.resolve(+lead) || all[0];
+      for (const u of all) u.party = party;
+    }
+    bus.emit('party_changed', { party: p.party });
+  }
+  /** Group requests go to the host, which runs the groups (Social). `who`: a unit, a name, or nothing. */
+  partyOp(op, who) { this.net.send({ t: 'party', op, ...this.ref(who) }); }
+  duelOp(op, who) { this.net.send({ t: 'duel', op, ...this.ref(who) }); }
+  ref(who) {
+    if (!who) return {};
+    if (typeof who === 'object') return who === this.p ? { id: this.myId } : who.netId ? { id: who.netId } : { name: who.name };
+    return { name: String(who) };
+  }
+  /** Your duel as the host sees it: [opponent id, live, flag x, flag z]. */
+  duelState(du) {
+    const p = this.p;
+    if (du) {
+      if (!p.duel) p.duel = { x: du[2], z: du[3], flag: duelFlag(this.app.world.scene, du[2], this.app.world.heightAt(du[2], du[3]), du[3]) };
+      p.duel.live = !!du[1];
+      const opp = du[1] ? this.resolve(du[0]) || null : null;
+      if (p.duelWith !== opp) { if (p.duelWith) p.duelWith.duelWith = null; p.duelWith = opp; if (opp) opp.duelWith = p; }
+    } else if (p.duel) {
+      p.duel.flag.parent?.remove(p.duel.flag);
+      if (p.duelWith) p.duelWith.duelWith = null;
+      p.duelWith = null; p.duel = null;
+    }
   }
 
   // ---------------------------------------------------------------- events
@@ -245,7 +287,7 @@ export class GuestSession {
       if (sp.target === 'ground' && !point) point = u.target && !u.target.dead ? u.target.pos.clone() : u.pos.clone();
       const chk = canCast(u, sid, target, point);
       if (!chk.ok) { if (!chk.silent) bus.emit('error', { unit: u, msg: chk.err }); return false; }
-      if ((sp.target === 'enemy' || sp.target === 'ally') && target !== u) cb.faceTarget(u, target);
+      if ((sp.target === 'enemy' || sp.target === 'ally') && target !== u && !u.moving) cb.faceTarget(u, target);
       if (sp.target === 'ally' && target !== u && !target.netId) target = u; // local NPCs don't exist on the host
       self.net.send({ t: 'cast', id: sid, tgt: self.netId(target), pt: point ? [r1(point.x), r1(point.z)] : undefined });
       if (!sp.offGcd) { u.gcd = sp.gcd ?? GCD; u.gcdMax = u.gcd; }
@@ -286,6 +328,12 @@ export class GuestSession {
         if (map[c]) { ch = map[c]; text = rest.join(' '); }
         else if (['w', 'whisper', 't', 'tell', 'msg'].includes(c)) { ch = 'whisper'; to = rest[0]; text = rest.slice(1).join(' '); }
         else if (c === 'r' || c === 'reply') { ch = 'whisper'; to = self.lastWhisper; text = rest.join(' '); if (!to) return; }
+        else if (c === 'invite' || c === 'inv') { const n = rest.join(' ') || self.p.target; if (!n) return bus.emit('chat', { ch: 'system', text: 'Invite whom? Type /invite and a name, or right-click a player.' }); return self.partyOp('invite', n); }
+        else if (c === 'leave' || c === 'leaveparty') return self.partyOp('leave');
+        else if (c === 'kick' || c === 'uninvite' || c === 'u') return self.partyOp('kick', rest.join(' ') || self.p.target);
+        else if (c === 'promote' || c === 'pr') return self.partyOp('promote', rest.join(' ') || self.p.target);
+        else if (c === 'duel') { const t = rest.join(' ') || self.p.target; if (!t) return bus.emit('chat', { ch: 'system', text: 'Target a player to challenge them to a duel.' }); return self.duelOp('challenge', t); }
+        else if (c === 'yield' || c === 'forfeit') return self.duelOp('yield');
         else if (EMOTES[c]) {
           self.p.model?.play?.(EMOTES[c]);
           bus.emit('chat', { ch: 'emote', text: `${self.p.name} ${VERBS[c]}.` });
@@ -294,6 +342,7 @@ export class GuestSession {
         } else return playerChat(raw, defaultCh); // /roll, /played, /help… answered here
       }
       if (!text) return;
+      if (ch === 'party' && !self.p.party) return bus.emit('chat', { ch: 'system', text: "You aren't in a group." });
       if (ch === 'whisper') { if (!to) return; bus.emit('chat', { ch: 'whisper_out', from: self.p.name, to, text }); self.net.send({ t: 'chat', ch, to, text }); return; }
       bus.emit('chat', { ch, from: self.p.name, unit: self.p, cls: self.p.cls, text });
       if (ch === 'say' || ch === 'yell') bus.emit('bubble', { unit: self.p, text });
@@ -301,5 +350,5 @@ export class GuestSession {
     };
     this.offChat = bus.on('chat', e => { if (e.$net && e.ch === 'whisper' && e.from) self.lastWhisper = e.from; });
   }
-  dispose() { this.closed = true; clearTimeout(this.retryT); this.net?.close(); this.clearUnits(); this.offChat?.(); }
+  dispose() { this.closed = true; clearTimeout(this.retryT); try { if (this.joined) this.net?.send({ t: 'bye' }); } catch { /* */ } this.net?.close(); this.clearUnits(); this.offChat?.(); }
 }

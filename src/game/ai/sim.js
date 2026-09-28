@@ -2,6 +2,7 @@
 import { SPELLS } from '../data/spells.js';
 import { CAMPS, PLACES } from '../../world/zone.js';
 import { bus } from '../events.js';
+import { isHuman } from '../party.js';
 
 const TOWN_SPOTS = [
   { x: 4, z: 142, act: 'mailbox' }, { x: 10, z: 157, act: 'statue' }, { x: -6, z: 136, act: 'inn' }, { x: 22, z: 164, act: 'well' },
@@ -25,7 +26,7 @@ export class SimBrain {
   choose(force) {
     const u = this.u, r = Math.random();
     if (force) { this.set(force); return; }
-    if (u.party && u.party.leaderIsPlayer) { this.set('follow'); return; }
+    if (u.party) { this.set('follow'); return; }
     if (u.persona.arch === 'afk' && r < 0.35) return this.set('afk');
     if (r < 0.52) this.set('quest');
     else if (r < 0.8) this.set('town');
@@ -161,10 +162,12 @@ export class SimBrain {
   }
 
   following(dt, walk) {
-    const u = this.u, p = this.g.player;
-    if (!p || !u.party) { this.choose(); return; }
-    const leader = p;
-    const slot = u.party.members.indexOf(u);
+    const u = this.u, party = u.party;
+    // follow the group's leader (a human leads any group with people in it), or the nearest person in it
+    const here = m => isHuman(m) && !m.offline;
+    const leader = here(party?.leader) ? party.leader : party?.all.find(here);
+    if (!leader) { this.choose(); return; }
+    const slot = party.all.filter(m => m.kind === 'sim').indexOf(u);
     const ang = leader.facing + (slot - 1.5) * 0.65; // behind the leader: +sin/+cos of facing
     const tx = leader.pos.x + Math.sin(ang) * 3.4, tz = leader.pos.z + Math.cos(ang) * 3.4;
     const d = Math.hypot(tx - u.pos.x, tz - u.pos.z);
@@ -186,7 +189,7 @@ export class SimBrain {
   healParty() {
     const u = this.u, g = this.g;
     if (u.casting || u.gcd > 0) return;
-    const party = u.party ? [g.player, ...u.party.members] : [u];
+    const party = u.party ? u.party.all : [u];
     const low = party.filter(m => m && !m.dead && m.hpPct < 0.72).sort((a, b) => a.hpPct - b.hpPct)[0];
     if (!low) return;
     const spell = u.cls === 'priest' ? (low.hpPct < 0.45 && u.level >= 4 && !low.hasAura('weakenedSoul') ? 'aegis' : u.level >= 5 && !low.hasAura('renew') ? 'renew' : 'flashHeal') : 'flashHeal';

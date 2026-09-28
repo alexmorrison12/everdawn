@@ -25,7 +25,12 @@ export class Minimap {
     this.coords = h('div', 'coords', el);
     this.canvas.addEventListener('click', e => {
       const r = this.canvas.getBoundingClientRect();
-      ui.emit('minimapClick', (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+      ui.emit(e.altKey || e.ctrlKey || e.metaKey ? 'minimapMark' : 'minimapClick', (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
+    });
+    this.canvas.addEventListener('pointerdown', e => { // middle-click: a waypoint for your group
+      if (e.button !== 1) return; e.preventDefault();
+      const r = this.canvas.getBoundingClientRect();
+      ui.emit('minimapMark', (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height);
     });
     this.canvas.addEventListener('wheel', e => { e.preventDefault(); ui.emit('minimapZoom', e.deltaY < 0 ? 1 : -1); }, { passive: false });
     show(this.mail, false);

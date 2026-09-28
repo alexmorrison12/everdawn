@@ -4,7 +4,7 @@ import { iconURL } from './icons.js';
 import { questMarkURL, markerURL } from './art.js';
 import { moneyEl } from './tooltip.js';
 
-class Window {
+export class Window {
   constructor(ui, parent, id, cls, title) {
     this.ui = ui; this.id = id;
     const el = this.el = h('div', 'evd-win-' + id + ' evd-panel ' + cls, parent);
@@ -17,13 +17,13 @@ class Window {
   toggle() { this.isOpen ? this.close() : this.open(); }
 }
 
-function itemSlot(parent, cls = '') {
+export function itemSlot(parent, cls = '') {
   const s = h('div', 'evd-slot ptr ' + cls, parent);
   s.img = h('img', 'ic', s);
   s.cnt = h('span', 'cnt', s);
   return s;
 }
-function fillSlot(s, e, placeholder) {
+export function fillSlot(s, e, placeholder) {
   const it = e && (e.item || e);
   s._item = it || null;
   s.className = s.className.replace(/\bq-\w+/g, '').trim();
@@ -131,7 +131,8 @@ export class WorldMap extends Window {
     this.coords = h('div', 'mcoords', this.el);
     frame.addEventListener('pointermove', e => { const r = frame.getBoundingClientRect(); setText(this.coords, `Cursor: ${((e.clientX - r.left) / r.width * 100).toFixed(1)}, ${((e.clientY - r.top) / r.height * 100).toFixed(1)}`); });
     frame.addEventListener('pointerleave', () => setText(this.coords, this._pc || ''));
-    frame.addEventListener('click', e => { const r = frame.getBoundingClientRect(); ui.emit('mapClick', (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); });
+    frame.addEventListener('click', e => { const r = frame.getBoundingClientRect(); ui.emit(e.altKey || e.ctrlKey || e.metaKey ? 'mapMark' : 'mapClick', (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); });
+    frame.addEventListener('pointerdown', e => { if (e.button !== 1) return; e.preventDefault(); const r = frame.getBoundingClientRect(); ui.emit('mapMark', (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height); }); // middle-click: waypoint
     frame.classList.add('ptr');
   }
   /** labels: [{ name, x, y (0..1), levels?: '1-3', kind?: 'zone'|'town'|'poi'|'danger' }] */
@@ -160,6 +161,7 @@ export class WorldMap extends Window {
       if (['available', 'complete', 'incomplete', 'daily'].includes(m.type)) h('img', 'q', e).src = questMarkURL(m.type);
       else if (m.type === 'boss') h('img', 'b', e).src = markerURL('skull');
       else if (m.type === 'party') { const d = h('i', 'dot', e); if (m.cls) d.style.background = classColor(m.cls); }
+      else if (m.type === 'wp') h('i', '', e).style.setProperty('--c', m.color || '#ffd35a');
       if (m.label) { e.classList.add('ptr'); e._tip = () => ({ type: 'text', title: m.label, lines: m.lines || [] }); }
     }
   }
@@ -167,10 +169,10 @@ export class WorldMap extends Window {
 
 // ------------------------------------------------------------------------------------ help / keybinds
 export const DEFAULT_BINDINGS = [
-  { title: 'Movement', rows: [['W,A,S,D', 'Move / turn'], ['Q,E', 'Strafe'], ['Space', 'Jump'], ['Left-drag', 'Orbit camera'], ['Right-drag', 'Steer'], ['Both buttons', 'Run forward'], ['Wheel', 'Zoom']] },
+  { title: 'Movement', rows: [['W,A,S,D', 'Move / turn'], ['Q,E', 'Strafe'], ['Space', 'Jump'], ['Left-drag', 'Orbit camera'], ['Right-drag', 'Steer'], ['Both buttons', 'Run forward'], ['Num Lock', 'Autorun'], ['Num /', 'Walk / run'], ['Wheel', 'Zoom']] },
   { title: 'Combat', rows: [['Tab', 'Target nearest enemy'], ['1,–,=', 'Action bar'], ['Right-click', 'Attack / interact'], ['Esc', 'Clear target / close'], ['F', 'Target of target']] },
-  { title: 'Interface', rows: [['C', 'Character'], ['B', 'Bags'], ['M', 'World map'], ['N', 'Damage meter'], ['H', 'This help'], ['Enter', 'Chat'], ['/', 'Chat command']] },
-  { title: 'Chat', rows: [['/s,/y,/p', 'Say · Yell · Party'], ['/raid,/g', 'Raid · Guild'], ['/w Name', 'Whisper'], ['/r', 'Reply'], ['/1,/2,/4', 'General · Trade · LFG'], ['/dance,/roll', 'Emotes & dice'], ['/rw', 'Raid warning']] },
+  { title: 'Interface', rows: [['C', 'Character'], ['B', 'Bags'], ['P', 'Spellbook'], ['L', 'Quest log'], ['O', 'Social / group'], ['M', 'World map'], ['N', 'Damage meter'], ['Middle-click', 'Waypoint for your group'], ['H', 'This help'], ['Enter', 'Chat']] },
+  { title: 'Chat', rows: [['/s,/y,/p', 'Say · Yell · Party'], ['/w Name', 'Whisper'], ['/r', 'Reply'], ['/invite', 'Invite to group'], ['/leave', 'Leave group'], ['/duel', 'Duel your target'], ['/1,/2,/4', 'General · Trade · LFG'], ['/logout', 'Log out']] },
 ];
 export class HelpOverlay extends Window {
   constructor(ui, parent) {
@@ -191,13 +193,14 @@ export class HelpOverlay extends Window {
 }
 
 // ------------------------------------------------------------------------------------ settings
-export const DEFAULT_SETTINGS = { master: 80, music: 60, sfx: 80, ambience: 70, voice: 70, quality: 'high', sensitivity: 50, invertY: false, showFPS: false, uiScale: 100, chatFade: true };
+export const DEFAULT_SETTINGS = { master: 80, music: 60, sfx: 80, ambience: 70, voice: 70, quality: 'high', sensitivity: 50, invertY: false, mouseLock: true, autoLoot: true, showFPS: false, uiScale: 100, chatFade: true };
 export class Settings extends Window {
   constructor(ui, parent) {
     super(ui, parent, 'settings', '', 'Game Menu');
     this.v = { ...DEFAULT_SETTINGS };
     const b = h('div', 'sbody', this.el);
     const sec = (t) => { const s = h('div', 'ssec', b); h('div', 'sst', s, t); return s; };
+    this.actions = h('div', 'sgame', b); // Log Out, Leave World… (setActions)
     this.inputs = {};
     const slider = (s, key, label, min = 0, max = 100, fmt = v => v + '%') => {
       const r = h('label', 'srow', s); h('span', 'sl', r, label);
@@ -223,12 +226,22 @@ export class Settings extends Window {
     check(g, 'showFPS', 'Show FPS counter');
     const c = sec('Controls');
     slider(c, 'sensitivity', 'Mouse Sensitivity', 1, 100, v => (v / 50).toFixed(2) + '×'); check(c, 'invertY', 'Invert mouse Y');
+    check(c, 'mouseLock', 'Lock the cursor while turning with the mouse (turn all the way around)');
+    const gp = sec('Gameplay');
+    check(gp, 'autoLoot', 'Auto Loot: clicking a corpse takes everything (Shift-click to pick items)');
     const i = sec('Interface');
     slider(i, 'uiScale', 'UI Scale', 70, 130, v => v + '%'); check(i, 'chatFade', 'Fade idle chat');
     const btns = h('div', 'sbtns', this.el);
     const def = h('button', 'evd-btn dark', btns, 'Defaults'); def.addEventListener('click', () => { this.set(DEFAULT_SETTINGS); this._emit(); });
     const ok = h('button', 'evd-btn', btns, 'Okay'); ok.addEventListener('click', () => this.close());
     this._segs();
+  }
+  onOpen() { this.ui.emit('settingsOpen'); }
+  /** Session buttons at the top of the Game Menu: [{ id, label, dark? }] → ui 'gameAction' (id). */
+  setActions(list) {
+    this.actions.textContent = '';
+    for (const a of list) { const bt = h('button', 'evd-btn' + (a.dark ? ' dark' : ''), this.actions, a.label); bt.addEventListener('click', () => this.ui.emit('gameAction', a.id)); }
+    show(this.actions, list.length > 0);
   }
   _segs() { for (const q in this.qBtns) setCls(this.qBtns[q], 'on', this.v.quality === q); }
   _emit() { this.ui._applySettings(this.v); this.ui.emit('settings', { ...this.v }); }

@@ -106,9 +106,10 @@ export class LootWindow {
         r._tip = () => ({ type: 'item', item: it });
       }
       r.addEventListener('click', () => {
+        if (!this.o || !this.entries[i]) return;
         if (this.o.onLoot) this.o.onLoot(i, e);
         this.ui.emit('loot', i, e);
-        if (this.o.autoRemove !== false) this.remove(i);
+        if (this.o && this.o.autoRemove !== false) this.remove(i); // (taking the last item can close the window first)
       });
     });
   }

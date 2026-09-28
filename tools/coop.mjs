@@ -105,6 +105,123 @@ if (process.argv.includes('--social')) {
     return { popup, guest: { goldDelta: g1.gold - g0.gold, potsDelta: g1.pots - g0.pots, open: g1.open }, host: { goldDelta: h1.gold - h0.gold, potsDelta: h1.pots - h0.pots, open: h1.open } };
   });
   await shot(H, 'host_social'); await shot(Gp, 'guest_social');
+} else if (process.argv.includes('--party')) {
+  const lines = (P, re) => P.evaluate(re => [...document.querySelectorAll('.evd-chat .ln')].map(l => l.textContent).filter(t => new RegExp(re).test(t)).slice(-3), re);
+  const groups = async () => ({
+    host: await H.evaluate(() => { const pt = __game.game.player.party; return pt ? { lead: pt.leader?.name, all: pt.all.map(m => m.name + (m.offline ? '(off)' : '')) } : null; }),
+    guest: await Gp.evaluate(() => { const pt = __game.game.player.party; return pt ? { lead: pt.leader?.name, all: pt.all.map(m => m.name) } : null; }),
+  });
+  const clickPopup = (P, label) => P.evaluate(label => { const b = [...document.querySelectorAll('.evd-popup button')].find(x => x.textContent === label); b?.click(); return !!b; }, label);
+  const hostOnGuest = 'const A = __game, h = [...A.guest.units.values()].find(u => u.name === "Hostia");';
+  await step('guest leaves the group (/leave)', async () => {
+    await Gp.evaluate(() => __game.game.social.playerChat('/leave'));
+    await wait(1500);
+    return { ...(await groups()), hostSaw: await lines(H, 'Guestor leaves'), guestSaw: await lines(Gp, 'leave the group') };
+  });
+  await step('party chat needs a group', async () => {
+    await Gp.evaluate(() => __game.game.social.playerChat('/p anyone there?'));
+    await wait(1000);
+    return { guest: await lines(Gp, "aren't in a group"), hostHeard: (await lines(H, 'anyone there')).length };
+  });
+  await step('host tags a wolf: grey for the ungrouped guest; free again after it resets', async () => {
+    await H.evaluate(() => __game.tp(70, 125));
+    await Gp.evaluate(() => { const p = __game.game.player; p.pos.set(72, __game.world.heightAt(72, 127), 127); });
+    await wait(1200);
+    const id = await H.evaluate(() => { const A = __game, g = A.game, p = g.player, w = g.spawnMob('wolf', p.pos.x + 12, p.pos.z + 4, 3); w.brain.t = { ...w.brain.t, passive: true }; g.combat.engage(p, w); A.wolf = w; return w.id; });
+    await wait(1200);
+    const tagged = await Gp.evaluate(id => { const w = __game.guest.units.get(id); return { tapper: w?.tapper?.name ?? null }; }, id);
+    await H.evaluate(() => { const w = __game.wolf; w.brain.evade(); w.pos.copy(w.home); });
+    await wait(1500);
+    const after = await Gp.evaluate(id => { const w = __game.guest.units.get(id); return { tapper: w?.tapper?.name ?? null }; }, id);
+    return { whileTagged: tagged, afterReset: after, hostSide: await H.evaluate(() => __game.wolf.tapper?.name ?? null) };
+  });
+  await step('guest invites the host; the host accepts', async () => {
+    await Gp.evaluate(new Function(hostOnGuest + 'A.interact.partyOp("invite", h);'));
+    await wait(1500);
+    const popup = await clickPopup(H, 'Accept');
+    await wait(1500);
+    return { popup, ...(await groups()) };
+  });
+  await step('guest promotes the host; the host removes the guest', async () => {
+    await Gp.evaluate(new Function(hostOnGuest + 'A.interact.partyOp("promote", h);'));
+    await wait(1200);
+    const mid = await groups();
+    await H.evaluate(() => { const A = __game; A.interact.partyOp('kick', A.net.proxies()[0]); });
+    await wait(1500);
+    return { afterPromote: mid, afterKick: await groups(), guestSaw: await lines(Gp, 'removed from the group') };
+  });
+  await step('host invites the guest back; the guest accepts', async () => {
+    await H.evaluate(() => { const A = __game; A.interact.partyOp('invite', A.net.proxies()[0]); });
+    await wait(1500);
+    const popup = await clickPopup(Gp, 'Accept');
+    await wait(1500);
+    return { popup, ...(await groups()) };
+  });
+  await step('guest invites a SimPlayer into the group', async () => {
+    for (let k = 0; k < 4; k++) {
+      await Gp.evaluate(k => { const A = __game, p = A.game.player; const s = [...A.guest.units.values()].filter(u => u.kind === 'sim' && !u.dead && !u.party).sort((a, b) => a.pos.distanceTo(p.pos) - b.pos.distanceTo(p.pos))[k]; A.interact.partyOp('invite', s); }, k);
+      await wait(4500);
+      if ((await H.evaluate(() => __game.game.player.party?.size || 0)) >= 3) break;
+    }
+    return groups();
+  });
+  await step('waypoints: each sees the other\'s; clearing works', async () => {
+    await Gp.evaluate(() => { const p = __game.game.player; __game.waypoints.place(p.pos.x + 30, p.pos.z - 20); });
+    await H.evaluate(() => { const p = __game.game.player; __game.waypoints.place(p.pos.x - 25, p.pos.z + 10); });
+    await wait(1500);
+    const seen = {
+      host: await H.evaluate(() => [...__game.waypoints.list.values()].map(w => w.unit.name + (__game.waypoints.visible(w.unit) ? '' : '(hidden)'))),
+      guest: await Gp.evaluate(() => [...__game.waypoints.list.values()].map(w => w.unit.name + (__game.waypoints.visible(w.unit) ? '' : '(hidden)'))),
+      guestMinimap: await Gp.evaluate(() => __game.waypoints.markers().filter(m => m.kind === 'wp').length),
+    };
+    await Gp.evaluate(() => { const p = __game.game.player; __game.waypoints.place(p.pos.x + 30, p.pos.z - 20); }); // same spot again: take it down
+    await wait(1200);
+    return { ...seen, hostAfterClear: await H.evaluate(() => [...__game.waypoints.list.values()].map(w => w.unit.name)) };
+  });
+  await step('guest refreshes: offline in the group, then back in its slot', async () => {
+    await Gp.reload({ waitUntil: 'load' });
+    await wait(1500);
+    const during = await H.evaluate(() => __game.game.player.party?.all.map(m => m.name + (m.offline ? '(off)' : '')));
+    for (let i = 0; i < 60; i++) { const ok = await Gp.evaluate(() => !!(window.__game && __game.guest?.myId && __game.mode === 'world')).catch(() => false); if (ok) break; await wait(1000); }
+    await wait(3000);
+    return { during, after: await groups(), hostSaw: await lines(H, 'offline|back online') };
+  });
+  await step('duel: guest challenges the host; countdown; fireballs; the host yields at 1 health', async () => {
+    await Gp.evaluate(new Function(hostOnGuest + 'A.game.player.pos.set(h.pos.x + 12, h.pos.y, h.pos.z); A.interact.duelOp("challenge", h);'));
+    await wait(1500);
+    const popup = await clickPopup(H, 'Accept');
+    await wait(1200);
+    const counting = await Gp.evaluate(new Function(hostOnGuest + 'const p = A.game.player; return { duel: !!p.duel, enemyYet: p.isEnemy(h) };'));
+    await wait(3500);
+    const live = await Gp.evaluate(new Function(hostOnGuest + 'const p = A.game.player; return { live: !!p.duel?.live, enemy: p.isEnemy(h), flag: !!p.duel?.flag?.parent };'));
+    const hp0 = await H.evaluate(() => __game.game.player.hp);
+    await Gp.evaluate(new Function(hostOnGuest + 'const p = A.game.player; A.game.pc.setTarget(h); p.gcd = 0; p.casting = null; A.game.combat.cast(p, "fireBlast", h);'));
+    await wait(1500);
+    const hp1 = await H.evaluate(() => __game.game.player.hp);
+    await H.evaluate(() => { const A = __game; A.game.combat.damage(A.net.proxies()[0], A.game.player, 999999, 'fire', { noMiss: true }); });
+    await wait(1500);
+    const end = await H.evaluate(() => { const p = __game.game.player; return { hp: p.hp, dead: p.dead, duel: !!p.duel }; });
+    return { popup, counting, live, hostHpDrop: Math.round(hp0 - hp1), end, guestSaw: await lines(Gp, 'in a duel'), guestAfter: await Gp.evaluate(() => ({ duel: !!__game.game.player.duel, flags: (() => { let n = 0; __game.world.scene.traverse(o => { if (o.geometry?.type === 'PlaneGeometry' && o.material?.color?.getHex?.() === 0xb01818) n++; }); return n; })() })) };
+  });
+  await step('host stops hosting: the guest is told and can go back to the title', async () => {
+    await H.evaluate(() => __game.stopHosting());
+    await wait(2500);
+    const told = await Gp.evaluate(() => ({ closed: !!__game.guest?.closed, popup: [...document.querySelectorAll('.evd-popup')].some(e => /closed their world/.test(e.textContent)) }));
+    await clickPopup(Gp, 'Return to Title');
+    await Gp.waitForNavigation({ waitUntil: 'load', timeout: 60000 }).catch(() => {});
+    await Gp.waitForFunction(() => window.__game && __game.mode === 'title', { timeout: 90000 }).catch(() => {});
+    return { told, guestMode: await Gp.evaluate(() => __game.mode), host: await H.evaluate(() => ({ net: !!__game.net, mode: __game.mode, party: __game.game.player.party?.size || 0 })) };
+  });
+  await step('host logs out to the title and back in', async () => {
+    const out = await H.evaluate(() => { __game.logout(); return { mode: __game.mode, player: !!__game.game.player }; });
+    await wait(800);
+    await H.evaluate(() => __game.ui.emit('login:enter'));
+    await wait(600);
+    await clickPopup(H, 'Continue');
+    await wait(2500);
+    return { out, back: await H.evaluate(() => ({ mode: __game.mode, name: __game.game.player?.name, sims: __game.game.sim.units.filter(u => u.kind === 'player').length })) };
+  });
+  await shot(H, 'host_party');
 } else if (process.argv.includes('--refresh')) {
   await step('host refreshes; comes back to the same room; the guest reconnects', async () => {
     const before = await H.evaluate(() => __game.net.code);

@@ -1,0 +1,86 @@
+/* ============================================================================================
+   EVERDAWN UI — Spellbook, Quest Log, Social, Merchant (books.js), waypoint labels, drag ghost
+   ============================================================================================ */
+.evd-win-spellbook, .evd-win-quests, .evd-win-social, .evd-win-merchant { left: 56px; top: 104px; padding: 30px 16px 14px; max-height: calc(100% - 250px); display: flex; flex-direction: column; }
+.evd-win-spellbook { width: 440px; }
+.evd-win-quests { width: 640px; height: 560px; }
+.evd-win-social { width: 520px; }
+.evd-win-merchant { width: 420px; }
+.evd-win-spellbook .bsub, .evd-win-social .bsub { text-align: center; margin: 0 0 10px; font: 600 14px/1.3 var(--font); color: #e8dcc0; text-shadow: var(--ol); }
+.bhint { flex: none; margin-top: 10px; font: 500 12px/1.35 var(--font); color: #a89c80; text-align: center; text-shadow: var(--ol); }
+
+/* spellbook */
+.evd-win-spellbook .sbgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; overflow-y: auto; min-height: 0; }
+.evd-win-spellbook .sbrow { display: flex; align-items: center; gap: 10px; padding: 5px; border-radius: 4px; background: rgba(0,0,0,.25); box-shadow: inset 0 0 0 1px rgba(255,210,120,.12); }
+.evd-win-spellbook .sbrow .evd-slot { width: 44px; height: 44px; cursor: grab; }
+.evd-win-spellbook .sbrow.locked { opacity: .5; }
+.evd-win-spellbook .sbrow.locked .evd-slot { cursor: default; filter: grayscale(1); }
+.evd-win-spellbook .sbn { font: 700 14px/1.2 var(--font); color: #fff; text-shadow: var(--ol); }
+.evd-win-spellbook .sbl { font: 500 12px/1.3 var(--font); color: #b8a888; text-shadow: var(--ol); }
+
+/* quest log */
+.evd-win-quests .qlbody { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr; gap: 12px; }
+.evd-win-quests .qllist { overflow-y: auto; padding: 4px; border-radius: 4px; background: rgba(0,0,0,.3); box-shadow: inset 0 0 0 1px rgba(255,210,120,.14); }
+.evd-win-quests .qlq { display: flex; align-items: baseline; gap: 6px; padding: 5px 6px; border-radius: 3px; font: 600 13px/1.25 var(--font); color: #ffd35a; text-shadow: var(--ol); }
+.evd-win-quests .qlq:hover { background: rgba(255,220,140,.1); }
+.evd-win-quests .qlq.sel { background: rgba(255,210,90,.2); box-shadow: inset 0 0 0 1px rgba(255,210,90,.45); color: #fff; }
+.evd-win-quests .qll { flex: none; color: #b8a888; font-size: 12px; }
+.evd-win-quests .qln { flex: 1; }
+.evd-win-quests .qlc { flex: none; font-size: 11px; color: #50e080; }
+.evd-win-quests .qlpage { overflow-y: auto; padding: 14px 18px; border-radius: 4px; background: var(--evd-parchment, #d8c49a); box-shadow: inset 0 0 0 2px #3a2208, inset 0 0 40px rgba(90,50,10,.45); color: #2e1c0a; }
+.evd-win-quests .qlt { margin-bottom: 8px; font: 700 21px/1.15 var(--serif); color: #3c1e02; }
+.evd-win-quests .qlob { font: 600 14px/1.5 var(--font); color: #3a2a18; }
+.evd-win-quests .qlob::before { content: '• '; }
+.evd-win-quests .qlob.done { color: #7a6a50; }
+.evd-win-quests .qlturn { margin-top: 6px; font: 700 14px/1.3 var(--font); color: #1c5a10; }
+.evd-win-quests .qlh { margin: 14px 0 5px; padding-bottom: 3px; border-bottom: 1px solid rgba(90,50,10,.35); font: 700 16px/1.1 var(--serif); color: #3c1e02; }
+.evd-win-quests .qltext { font: 500 14px/1.5 var(--font); white-space: pre-wrap; }
+.evd-win-quests .qlrw { display: flex; align-items: center; gap: 8px; margin: 4px 0; font: 700 13px/1.2 var(--font); text-shadow: 0 0 1px rgba(0,0,0,.4); }
+.evd-win-quests .qlmoney { display: flex; align-items: center; gap: 14px; margin-top: 6px; font: 600 14px/1 var(--font); }
+.evd-win-quests .qlxp { color: #5a2a8a; }
+.evd-win-quests .qlempty { font: 500 15px/1.5 var(--font); color: #4a3218; }
+.evd-win-quests .qlfoot { flex: none; display: flex; justify-content: space-between; align-items: center; margin-top: 10px; font: 600 12px/1 var(--font); color: #b8b0a0; text-shadow: var(--ol); }
+
+/* social */
+.evd-win-social .socbody { overflow-y: auto; min-height: 0; }
+.evd-win-social .soch { margin: 4px 0 6px; padding-bottom: 3px; border-bottom: 1px solid rgba(255,210,120,.3); font: 700 14px/1 var(--serif); letter-spacing: .05em; color: var(--gold); text-shadow: var(--ol); }
+.evd-win-social .soch ~ .soch { margin-top: 14px; }
+.evd-win-social .socnone { padding: 4px 2px 6px; font: 500 13px/1.4 var(--font); color: #b8a888; text-shadow: var(--ol); }
+.evd-win-social .socrow { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 2px 4px; border-radius: 3px; }
+.evd-win-social .socrow:nth-child(odd) { background: rgba(0,0,0,.18); }
+.evd-win-social .socrow.off { opacity: .55; }
+.evd-win-social .soclead { width: 16px; height: 16px; }
+.evd-win-social .socn { font: 700 14px/1.2 var(--font); text-shadow: var(--ol); white-space: nowrap; }
+.evd-win-social .socl { flex: 1; font: 500 12px/1.2 var(--font); color: #b8a888; text-shadow: var(--ol); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evd-win-social .evd-btn.small { min-width: 0; padding: 0 9px; }
+
+/* merchant */
+.evd-win-merchant .mtabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.evd-win-merchant .mtab { flex: 1; height: 26px; cursor: pointer; font: 700 13px/1 var(--serif); color: #c8b890; text-shadow: var(--ol); background: linear-gradient(180deg, #2e2418, #120c06); border: 1px solid #000; border-radius: 4px 4px 0 0; box-shadow: inset 0 0 0 1px #6a5028; }
+.evd-win-merchant .mtab.on { color: #fff4c8; background: linear-gradient(180deg, #9a6a20, #3e2406); box-shadow: inset 0 0 0 1px #ffd35a; }
+.evd-win-merchant .mgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; overflow-y: auto; min-height: 120px; }
+.evd-win-merchant .mrow { display: flex; align-items: center; gap: 8px; padding: 4px; border-radius: 4px; background: rgba(0,0,0,.25); box-shadow: inset 0 0 0 1px rgba(255,210,120,.12); }
+.evd-win-merchant .mrow:hover { background: rgba(255,220,140,.1); box-shadow: inset 0 0 0 1px rgba(255,220,140,.35); }
+.evd-win-merchant .mrow.poor .mp { filter: grayscale(1) brightness(.7); }
+.evd-win-merchant .mrow .evd-slot { width: 38px; height: 38px; }
+.evd-win-merchant .mt { min-width: 0; }
+.evd-win-merchant .mn { font: 700 13px/1.2 var(--font); text-shadow: var(--ol); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evd-win-merchant .mp { margin-top: 3px; font: 600 12px/1 var(--font); }
+.evd-win-merchant .mnone { grid-column: 1 / -1; padding: 12px 4px; font: 500 13px/1.4 var(--font); color: #a89c80; text-align: center; }
+.evd-win-merchant .mfoot { flex: none; display: flex; align-items: center; justify-content: space-between; margin-top: 10px; }
+
+/* game menu */
+.evd-win-settings { max-height: calc(100% - 40px); display: flex; flex-direction: column; }
+.evd-win-settings .sbody { overflow-y: auto; min-height: 0; padding-right: 4px; }
+.evd-win-settings .sgame { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,210,120,.3); }
+.evd-win-settings .sgame .evd-btn { min-width: 150px; }
+
+/* dragging an ability */
+.evd-dragghost { position: fixed; left: 0; top: 0; z-index: 99999; width: 44px; height: 44px; border-radius: 4px; pointer-events: none; opacity: .9; box-shadow: 0 0 0 1px #000, 0 0 0 2px #ffd35a, 0 6px 16px rgba(0,0,0,.6); }
+
+/* waypoints (game/waypoints.js) */
+.evd-wpl { position: absolute; left: 0; top: 0; pointer-events: none; text-align: center; white-space: nowrap; }
+.evd-wpl b { display: block; font: 700 14px/1.1 var(--font, sans-serif); color: var(--c, #ffd35a); text-shadow: 0 0 2px #000, 0 1px 2px #000, 0 0 8px rgba(0,0,0,.8); }
+.evd-wpl span { font: 600 12px/1.2 var(--font, sans-serif); color: #fff; text-shadow: 0 0 2px #000, 0 1px 2px #000; }
+.evd-win-map .mm.wp { transform: translate(-50%, -100%); }
+.evd-win-map .mm.wp i { display: block; width: 14px; height: 22px; background: var(--c, #ffd35a); clip-path: polygon(50% 100%, 0 35%, 15% 8%, 50% 0, 85% 8%, 100% 35%); filter: drop-shadow(0 0 2px #000); }

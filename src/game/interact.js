@@ -58,7 +58,9 @@ export class Interactions {
     this.app = app; this.trade = null;
     const s = document.createElement('style'); s.textContent = CSS; document.head.appendChild(s);
     bus.on('interact_sim', ({ unit }) => this.menu(unit));
-    app.ui.target.el.addEventListener('contextmenu', e => { e.preventDefault(); const t = this.player?.target; if (isPlayer(t)) this.menu(t, e.clientX, e.clientY); });
+    app.ui.target.el.addEventListener('contextmenu', e => { e.preventDefault(); const t = this.player?.target; if (isPlayer(t) || (t && t === this.player)) this.menu(t, e.clientX, e.clientY); });
+    app.ui.player.el.addEventListener('contextmenu', e => { e.preventDefault(); if (this.player) this.selfMenu(e.clientX, e.clientY); });
+    for (const f of app.ui.party.m) f.el.addEventListener('contextmenu', e => { e.preventDefault(); if (isPlayer(f.u)) this.menu(f.u, e.clientX, e.clientY); });
     addEventListener('keydown', e => { if (e.key === 'Escape' && (this.menuEl || this.win)) { this.closeMenu(); } }, true);
   }
   get game() { return this.app.game; }
@@ -69,29 +71,65 @@ export class Interactions {
 
   // ---------------------------------------------------------------- the menu
   menu(u, x, y) {
-    if (!isPlayer(u) || u === this.player) return;
+    if (!isPlayer(u) || u === this.player) { if (u === this.player) this.selfMenu(x, y); return; }
+    const me = this.player, party = me.party, inParty = !!party && u.party === party, lead = !!party && party.leader === me;
+    const human = u.kind === 'remote';
+    const { el, item } = this.openMenu(u.name, `Level ${u.level} ${cap(u.race)} ${cap(u.cls)}${human ? ' · player' : ''}${u.offline ? ' · offline' : ''}`, x, y);
+    item('Whisper', () => this.ui.chat.open(`/w ${u.name} `), u.offline);
+    if (!inParty) item('Invite to Party', () => this.partyOp('invite', u), !!party && party.full);
+    else {
+      if (lead && human) item('Promote to Leader', () => this.partyOp('promote', u));
+      if (lead) item('Remove from Party', () => this.partyOp('kick', u));
+    }
+    item('Inspect', () => this.inspect(u), u.offline);
+    item('Trade', () => this.startTrade(u), !!this.trade || u.dead || u.offline);
+    item(this.pc?.follow === u ? 'Stop Following' : 'Follow', () => this.follow(u), u.dead || u.offline);
+    const dueling = me.duel && (me.duelWith === u || me.duel.a === u || me.duel.b === u);
+    if (dueling) item('Yield the Duel', () => this.duelOp('yield'));
+    else item('Challenge to a Duel', () => this.duelOp('challenge', u), !!me.duel || u.dead || u.offline || this.app.mode === 'raid');
+    if (inParty) item('Leave Party', () => this.partyOp('leave'));
+    this.showMenu(el);
+  }
+  /** Right-click your own portrait: group and duel options (WoW's self menu). */
+  selfMenu(x, y) {
+    const me = this.player; if (!me) return;
+    const party = me.party;
+    const { el, item } = this.openMenu(me.name, party ? `${party.leader === me ? 'Group leader' : `In ${party.leader?.name || 'a'}'s group`} · ${party.size}/5` : 'Not in a group', x, y);
+    item('Leave Party', () => this.partyOp('leave'), !party);
+    if (me.duel) item('Yield the Duel', () => this.duelOp('yield'));
+    item('Social Window (O)', () => this.ui.emit('micro', 'social'));
+    this.showMenu(el);
+  }
+  openMenu(title, sub, x, y) {
     this.closeMenu();
-    const m = this.app.input.mouse, px = x ?? (m.x || innerWidth / 2), py = y ?? (m.y || innerHeight / 2);
+    const m = this.app.input.mouse;
     const el = this.menuEl = document.createElement('div');
     el.className = 'evd-pmenu'; el.setAttribute('role', 'menu');
-    const human = u.kind === 'remote', inParty = !!u.party && u.party === this.player.party;
+    el._x = x ?? (m.x || innerWidth / 2); el._y = y ?? (m.y || innerHeight / 2);
     el.innerHTML = `<div class="hd"></div>`;
-    el.querySelector('.hd').append(u.name, Object.assign(document.createElement('small'), { textContent: `Level ${u.level} ${cap(u.race)} ${cap(u.cls)}${human ? ' · player' : ''}` }));
+    el.querySelector('.hd').append(title, Object.assign(document.createElement('small'), { textContent: sub }));
     const item = (label, fn, disabled = false) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.disabled = disabled; b.setAttribute('role', 'menuitem'); b.addEventListener('click', () => { this.closeMenu(); fn(); }); el.appendChild(b); };
-    item('Whisper', () => this.ui.chat.open(`/w ${u.name} `));
-    if (this.app.guest) item('Invite to Party', () => {}, true);
-    else if (human) item(inParty ? 'In your party' : 'Invite to Party', () => {}, true);
-    else if (inParty) item('Remove from Party', () => this.game.social.removeFromParty(u));
-    else item('Invite to Party', () => this.game.social.playerInvite(u.name));
-    item('Inspect', () => this.inspect(u));
-    item('Trade', () => this.startTrade(u), !!this.trade || u.dead);
-    item(this.pc?.follow === u ? 'Stop Following' : 'Follow', () => this.follow(u), u.dead);
+    return { el, item };
+  }
+  showMenu(el) {
     document.body.appendChild(el);
     const r = el.getBoundingClientRect();
-    el.style.left = Math.max(8, Math.min(innerWidth - r.width - 8, px + 6)) + 'px';
-    el.style.top = Math.max(8, Math.min(innerHeight - r.height - 8, py - 10)) + 'px';
+    el.style.left = Math.max(8, Math.min(innerWidth - r.width - 8, el._x + 6)) + 'px';
+    el.style.top = Math.max(8, Math.min(innerHeight - r.height - 8, el._y - 10)) + 'px';
     setTimeout(() => { this.outside = e => { if (!el.contains(e.target)) this.closeMenu(); }; addEventListener('pointerdown', this.outside, true); }, 0);
     el.querySelector('button:not(:disabled)')?.focus();
+  }
+  /** Group and duel requests: a friend's browser asks the host; solo or hosting, Social / Duels decide here. */
+  partyOp(op, u) {
+    if (this.app.guest) return this.app.guest.partyOp(op, u);
+    const soc = this.game.social, me = this.player;
+    if (op === 'invite') soc.invite(me, u); else if (op === 'kick') soc.kick(me, u); else if (op === 'promote') soc.promote(me, u);
+    else if (op === 'leave') { if (me.party) soc.leave(me); else this.say("You aren't in a group."); }
+  }
+  duelOp(op, u) {
+    if (this.app.guest) return this.app.guest.duelOp(op, u);
+    const d = this.game.duels;
+    if (op === 'challenge') d.challenge(this.player, u); else if (op === 'yield') d.forfeit(this.player);
   }
   closeMenu() { this.menuEl?.remove(); this.menuEl = null; if (this.outside) removeEventListener('pointerdown', this.outside, true); this.outside = null; }
 

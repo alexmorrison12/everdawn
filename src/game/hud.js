@@ -4,7 +4,7 @@ import { UI } from '../ui/ui.js';
 import { aura as adaptAura } from '../ui/adapt.js';
 import { bus } from './events.js';
 import { SPELLS } from './data/spells.js';
-import { CLASSES, xpToNext, MAX_LEVEL } from './data/classes.js';
+import { CLASSES, RACES, xpToNext, MAX_LEVEL } from './data/classes.js';
 import { QUEST, NPCS } from './data/quests.js';
 import { ITEMS, statLines, SLOTS } from './items.js';
 import { MOBS } from './data/mobs.js';
@@ -85,11 +85,30 @@ export class HUD {
     });
     ui.on('command', (cmd, arg, raw) => this.game.social.playerChat(raw));
     ui.on('playerClick', name => { const s = this.game.social.findSim(name); this.ui.chat.open(`/w ${s ? s.name : name} `); });
-    ui.on('useItem', (i, item) => { const b = this.game.player.bags[i]; if (!b) return; if (b.gear) this.game.equip(b.gear); else this.game.useItem(b.id); this.bagsDirty = this.charDirty = true; });
+    ui.on('useItem', (i, item) => {
+      const b = this.game.player.bags[i]; if (!b) return;
+      if (ui.merchant.isOpen) { this.game.sellItem(i); return; } // at a merchant, right-click sells (WoW)
+      if (b.gear) this.game.equip(b.gear); else this.game.useItem(b.id); this.bagsDirty = this.charDirty = true;
+    });
+    ui.on('spellbookCast', id => this.g.pc?.castSpell(id));
+    ui.on('barPlace', (i, id) => this.editBar(pc => { const j = pc.bar.indexOf(id), prev = pc.bar[i]; pc.bar[i] = id; if (j >= 0 && j !== i) pc.bar[j] = prev; }));
+    ui.on('barMove', (i, j) => this.editBar(pc => { const id = pc.bar[i]; if (j < 0 || j >= 10) pc.bar[i] = null; else { pc.bar[i] = pc.bar[j]; pc.bar[j] = id; } }));
+    ui.on('questAbandon', id => { const q = QUEST[id]; if (q) ui.popups.confirm(`Abandon **${q.title}**?`, ok => { if (ok) this.game.abandonQuest(id); }, 'Abandon', 'Keep'); });
+    ui.on('social', (a, id) => this.socialAction(a, id));
+    ui.on('merchantBuy', (i, n) => this.merchantBuy(i, n));
+    ui.on('merchantBuyback', i => { if (this.game.buyback(i)) this.merchantDirty = true; });
+    ui.on('merchantSellJunk', () => { if (!this.game.sellJunk()) ui.alerts.error('You have no junk to sell.'); });
+    ui.on('minimapClick', (fx, fy) => { const w = this.minimapToWorld(fx, fy); if (w) this.e.waypoints?.ping(w.x, w.z); });
+    ui.on('minimapMark', (fx, fy) => { const w = this.minimapToWorld(fx, fy); if (w) this.e.waypoints?.place(w.x, w.z); });
+    ui.on('mapMark', (u, v) => { if (this.e.mode === 'world') { this.e.waypoints?.place(u * 1024 - 512, -440 + v * 720); this.drawWorldMap(); } });
     ui.on('releaseSpirit', () => this.game.releaseSpirit());
     ui.on('roll', (id, choice) => this.onRoll(id, choice));
     ui.on('settings', s => this.e.applySettings?.(s));
-    ui.on('panel', (id, open) => { if (id === 'character' && open) { this.charDirty = true; } if (id === 'bags' && open) this.bagsDirty = true; if (id === 'map' && open) this.drawWorldMap(); });
+    ui.on('panel', (id, open) => {
+      if (id === 'character' && open) { this.charDirty = true; } if (id === 'bags' && open) this.bagsDirty = true; if (id === 'map' && open) this.drawWorldMap();
+      if (id === 'spellbook' && open) this.spellDirty = true; if (id === 'quests' && open) this.questDirty = true; if (id === 'social' && open) this.socialT = 0;
+      if (id === 'merchant' && !open) this.vendor = null;
+    });
     ui.on('meterMode', m => { this.meterMode = m; });
     ui.on('minimapZoom', d => { this.mmRadius = Math.max(50, Math.min(160, (this.mmRadius || 90) * (d > 0 ? 0.8 : 1.25))); });
     ui.on('questClick', () => ui.toggle('map'));
@@ -149,12 +168,19 @@ export class HUD {
     on('target_changed', ({ target }) => { this.portraitDirty = true; if (target && target.kind === 'mob' && !target.dead) this.game.onFirstCombat?.(); });
     on('raid_loot', ({ items, raid }) => this.raidLoot(items, raid));
     on('bubble', () => {});
+    on('duel_state', d => this.duelState(d));
+    on('party_changed', () => { this.socialT = 0; });
+    on('bar_changed', () => { this.spellDirty = true; });
+    on('bags_changed', () => { this.merchantDirty = true; });
+    on('money', () => { this.merchantDirty = true; });
+    on('waypoint', () => { if (ui.worldMap.isOpen) this.drawWorldMap(); });
     on('popup_close', ({ kind }) => { if (kind === 'readycheck') { try { this.readyPopup?.close(); } catch { } this.readyPopup = null; } });
   }
 
   chatLine(ev) {
     if (ev.hideLocal) return; // relayed to a friend only (net/host.js)
     const ui = this.ui, p = this.game.player;
+    if (ev.ch === 'party' && ev.unit && p && ev.unit !== p && !(p.party && ev.unit.party === p.party)) return; // another group's chatter
     let ch = CH_MAP[ev.ch] || ev.ch;
     if (ev.ch === 'say' && ev.unit && ev.unit.kind === 'npc') ch = 'npcSay';
     if (ev.ch === 'yell' && ev.unit && (ev.unit.kind === 'mob' || ev.unit.kind === 'boss' || !ev.unit.kind)) ch = 'npcYell';
@@ -212,16 +238,12 @@ export class HUD {
     const vendor = def.vendor;
     if (offers.length === 1 && !vendor) return openQuest(offers[0].q, offers[0].kind);
     const options = offers.map(o => ({ label: o.q.title, type: o.kind === 'offer' ? 'questAvailable' : o.kind === 'complete' ? 'questComplete' : 'questIncomplete', id: o.q.id }));
-    if (vendor) {
-      options.push({ label: 'Sell my junk', type: 'vendor', id: 'sell' });
-      for (const id of vendor) { const it = ITEMS[id]; options.push({ label: `Buy 5 × ${it.name} (${fmtMoney(id.startsWith('potion') ? 500 : 125)})`, type: 'vendor', id: 'buy:' + id }); }
-    }
+    if (vendor) options.push({ label: 'Let me browse your goods.', type: 'vendor', id: 'shop' });
     if (!options.length && !def.greet) return;
     ui.questDialog.open({
       mode: 'gossip', npc: { name: def.name }, title: def.name, text: def.greet || 'Well met, adventurer.', options,
       onSelect: (opt) => {
-        if (opt.id === 'sell') { const t = game.sellJunk(); if (!t) ui.alerts.error('You have nothing to sell'); return; }
-        if (opt.id?.startsWith('buy:')) { const id = opt.id.slice(4); game.buy(id, 5, id.startsWith('potion') ? 500 : 125); return; }
+        if (opt.id === 'shop') { this.openMerchant(npc); return; }
         const o = offers.find(x => x.q.id === opt.id); if (o) openQuest(o.q, o.kind);
       },
     });
@@ -231,12 +253,13 @@ export class HUD {
   drawNpcPortrait(npc) { const pt = this.ui.questDialog.pt; if (pt) this.portraits.draw(npc, pt); }
 
   lootWindow(corpse, items) {
-    const ui = this.ui, game = this.game;
+    const ui = this.ui, game = this.game, n = new Set(items.map(l => l.from || corpse)).size;
     ui.loot.open({
-      title: corpse.name,
+      title: n > 1 ? `${corpse.name} +${n - 1} nearby` : corpse.name,
       entries: items.map(l => l.gold ? { money: l.gold } : { item: l.gear ? uiItem(l.gear) : uiItem(ITEMS[l.id], l.id), count: l.count || 1, quest: !!ITEMS[l.id]?.quest }),
-      onLoot: (i) => { game.takeLoot(corpse, i); },
-      onClose: () => {},
+      // area loot: every entry remembers its own corpse (indices shift as items are taken)
+      onLoot: (i) => { const l = items[i], c = l.from || corpse, k = c.loot?.indexOf(l.ref ?? l); if (k >= 0) game.takeLoot(c, k); },
+      onClose: () => { game.lootSession = null; },
     });
     bus.emit('sound', { name: 'loot' });
   }
@@ -265,9 +288,11 @@ export class HUD {
     if (ui.death.isOpen && !p.dead && !p.ghost) ui.death.hide(); // revived (a raid wipe, a resurrect): back to the game
     ui.playerInfo = { name: p.name, cls: p.cls, race: p.race };
     p.ghost = !!p.ghost;
+    p.leader = !!p.party && p.party.leader === p && p.party.size > 1;
     ui.player.set(p);
     const t = p.target;
     if (t) t.tapped = !!(t.hostile && t.tapper && t.tapper !== p && t.tapper !== p.party);
+    if (t && (t.kind === 'sim' || t.kind === 'remote')) t.reaction = p.duelWith === t ? 'hostile' : undefined; // your duel opponent reads red
     ui.target.set(t && (!t.dead || t.lootable) ? t : null);
     ui.tot.set(t && t.target && !t.dead ? t.target : null);
     // portraits (throttled; on change)
@@ -322,22 +347,31 @@ export class HUD {
       }
     } else {
       ui.raid.set([]);
-      ui.party.set(p.party ? p.party.members.map(m => { m.selected = m === t; m.inRange = m.pos.distanceTo(p.pos) < 40; return m; }) : []);
+      ui.party.set(p.party ? p.party.members.slice(0, 4).map(m => { m.selected = m === t; m.inRange = !m.offline && m.pos.distanceTo(p.pos) < 40; m.leader = m === p.party.leader; return m; }) : []);
     }
-    // quest tracker
+    // quest tracker (and the quest log, when open)
+    if (this.trackerDirty) this.questDirty = true;
     if (this.trackerDirty && e.mode === 'world') {
       this.trackerDirty = false;
       ui.tracker.set(p.quests.map(a => { const q = QUEST[a.id]; const done = game.questComplete(a); return { id: q.id, title: q.title, level: q.level, complete: done, objectives: q.obj.map((o, i) => ({ text: o.label, have: a.progress[i], need: o.count ?? 1, done: a.progress[i] >= (o.count ?? 1) })) }; }));
     }
     if (e.mode === 'raid' && !this.raidTracker) { this.raidTracker = true; ui.tracker.set([]); }
-    // bags & character panel (only when open)
+    // bags, character, spellbook, quest log, social, merchant (only when open)
     if (this.bagsDirty && ui.bags.isOpen) { this.bagsDirty = false; this.pushBags(); }
+    if (this.spellDirty && ui.spellbook.isOpen) { this.spellDirty = false; this.pushSpellbook(); }
+    if (this.questDirty && ui.questLog.isOpen) { this.questDirty = false; this.pushQuestLog(); }
+    if (ui.social.isOpen && (this.socialT = (this.socialT || 0) - dt) <= 0) { this.socialT = 1; this.pushSocial(); }
+    if (ui.merchant.isOpen) {
+      if (!this.vendor || e.mode !== 'world' || this.vendor.pos.distanceTo(p.pos) > 9) ui.merchant.close();
+      else if (this.merchantDirty) { this.merchantDirty = false; this.pushMerchant(); }
+    }
     if (this.charDirty && ui.character.isOpen) { this.charDirty = false; this.pushCharacter(); }
     // minimap (10 Hz)
     this.mapT -= dt;
     if (this.mapT <= 0) { this.mapT = 0.1; this.pushMinimap(); }
     // nameplates + floating text anchors
     this.pushWorldSpace(dt);
+    this.e.waypoints?.update(dt, this.e.world.scene, this.e.camera, ui.worldLayer, (x, z) => this.e.world.heightAt(x, z), e.mode === 'world');
     ui.update(dt);
   }
 
@@ -390,7 +424,8 @@ export class HUD {
     const game = this.game;
     for (const n of Object.values(game.npcs)) if (n.questMark) markers.push({ x: n.pos.x, z: n.pos.z, kind: n.questMark === '!' ? 'quest' : 'turnin', edge: true });
     for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && a.progress[i] < (o.count ?? 1)) markers.push({ x: o.area[0], z: o.area[1], kind: 'area', edge: true }); }); }
-    if (p.party) for (const m of p.party.members) markers.push({ x: m.pos.x, z: m.pos.z, kind: 'party' });
+    if (p.party) for (const m of p.party.members) if (!m.offline) markers.push({ x: m.pos.x, z: m.pos.z, kind: 'party' });
+    for (const w of this.e.waypoints?.markers() || []) markers.push(w);
     if (p.corpsePos && p.ghost) markers.push({ x: p.corpsePos.x, z: p.corpsePos.z, kind: 'corpse', edge: true });
     for (const u of game.sim.query(p.pos, this.mmRadius)) if (u.hostile && !u.dead && u.inCombat && u.target === p) markers.push({ x: u.pos.x, z: u.pos.z, kind: 'hostile' });
     markers.push({ x: 0, z: -282, kind: 'portal', edge: p.level >= 9 });
@@ -422,6 +457,8 @@ export class HUD {
     // objective areas are shaded blobs (a grey "?" reads as "turn in here")
     for (const a of p.quests) { const q = QUEST[a.id]; q.obj.forEach((o, i) => { if (o.area && a.progress[i] < (o.count ?? 1)) mk.push({ x: U(o.area[0]), y: Vv(o.area[1]), type: 'area', w: (o.area[2] || 20) * 2 / 1024, h: (o.area[2] || 20) * 2 / Math.abs(z1 - z0), label: q.title, lines: [o.label] }); }); }
     mk.push({ x: U(0), y: Vv(-282), type: 'boss', label: 'The Ember Maw' });
+    if (p.party) for (const m of p.party.members) if (!m.offline) mk.push({ x: U(m.pos.x), y: Vv(m.pos.z), type: 'party', cls: m.cls, label: m.name });
+    for (const w of this.e.waypoints?.markers() || []) if (w.kind === 'wp') mk.push({ x: U(w.x), y: Vv(w.z), type: 'wp', color: w.color, label: w.label, lines: ['Middle-click it again to remove your own.'] });
     ui.worldMap.setMarkers(mk);
   }
 
@@ -433,7 +470,7 @@ export class HUD {
       if (u === p || !u.model?.root.visible) continue;
       if (u.kind === 'critter' && u !== t) continue; // critters get a nameplate only when targeted
       const d = cam.position.distanceTo(u.pos);
-      const isMob = u.hostile, maxD = u.boss ? 140 : isMob ? 48 : u.kind === 'npc' ? 36 : 40;
+      const foe = u === p.duelWith, isMob = u.hostile, maxD = u.boss ? 140 : isMob || foe ? 48 : u.kind === 'npc' ? 36 : 40;
       if (d > maxD && u !== t) continue;
       if (u.dead && !(u.lootable && isMob) && u !== t) continue;
       _v.set(u.pos.x, u.pos.y + (u.height || 1.8) + 0.45, u.pos.z).project(cam);
@@ -445,11 +482,11 @@ export class HUD {
       ui.nameplates.set({
         id: u.id, x, y, scale: Math.max(0.65, Math.min(1.1, 14 / Math.max(d, 1))), depth: d,
         name: u.afk ? `<AFK> ${u.name}` : u.name, guild: u.guild || u.title, level: u.boss ? '??' : u.level, playerLevel: p.level,
-        reaction: u.tapped ? 'tapped' : undefined, isPlayer: u.kind === 'sim' || u.kind === 'remote', cls: u.cls,
-        hp: u.hp, hpMax: u.hpMax, showHealth: isMob ? (u === t || u.hp < u.hpMax || u.inCombat) : false,
+        reaction: u.tapped ? 'tapped' : foe ? 'hostile' : undefined, isPlayer: u.kind === 'sim' || u.kind === 'remote', cls: u.cls,
+        hp: u.hp, hpMax: u.hpMax, showHealth: isMob || foe ? (u === t || u.hp < u.hpMax || u.inCombat || foe) : false,
         target: u === t, dim: !!t && u !== t && isMob, quest, classification: u.boss ? 'boss' : u.rare ? 'rareelite' : u.elite ? 'elite' : 'normal',
         cast: u.casting && isMob ? { name: u.casting.spell?.name, icon: u.casting.spell?.icon, elapsed: u.casting.t, duration: u.casting.dur, interruptible: !u.boss, channel: !!u.casting.channel } : undefined,
-        dead: u.dead, hostile: u.hostile, kind: u.kind, elite: u.elite, rare: u.rare, boss: u.boss, tapped: u.tapped,
+        dead: u.dead, hostile: u.hostile || foe, kind: u.kind, elite: u.elite, rare: u.rare, boss: u.boss, tapped: u.tapped,
       });
     }
     ui.nameplates.end();
@@ -461,6 +498,80 @@ export class HUD {
       _v.set(u.pos.x, u.pos.y + (u.height || 1.8) * (u === p ? 1.05 : 1.15), u.pos.z).project(cam);
       ui.fct.anchor(u.id, (_v.x * 0.5 + 0.5) * W, (-_v.y * 0.5 + 0.5) * H, _v.z < 1);
     }
+  }
+
+  // ------------------------------------------------------------------ action bar editing (spellbook drag, Shift-drag)
+  editBar(fn) {
+    for (const pc of new Set([this.game.pc, this.e.raid?.pc].filter(Boolean))) { fn(pc); pc.custom = true; }
+    bus.emit('bar_changed', { bar: this.g.pc?.bar });
+    this.e.save?.();
+  }
+  pushSpellbook() {
+    const p = this.game.player, bar = this.g.pc?.bar || [];
+    this.ui.spellbook.set({ cls: p.cls, level: p.level, spells: (CLASSES[p.cls].bar || []).map(id => { const sp = SPELLS[id], learn = sp.learn || 1; return { id, name: sp.name, icon: sp.icon, learn, known: learn <= p.level, onBar: bar.includes(id), tip: spellTip(sp, p) }; }) });
+  }
+  pushQuestLog() {
+    const p = this.game.player, g = this.game, sub = t => String(t || '').replace(/\$N/g, p.name).replace(/\$C/g, CLASSES[p.cls]?.name || '').replace(/\$R/g, RACES[p.race]?.name || '');
+    this.ui.questLog.set(p.quests.map(a => {
+      const q = QUEST[a.id];
+      return { id: q.id, title: q.title, level: q.level, complete: g.questComplete(a), text: sub(q.text), turnin: NPCS[q.turnin]?.name,
+        objectives: q.obj.map((o, i) => ({ text: o.label, have: a.progress[i], need: o.count ?? 1, done: a.progress[i] >= (o.count ?? 1) })),
+        rewards: { xp: q.xp, money: q.gold * 100, items: Array.isArray(q.rewards) ? q.rewards.map(id => uiItem(ITEMS[id], id)) : [], choice: q.rewards === 'gear' || q.rewards === 'rare' } };
+    }));
+  }
+  pushSocial() {
+    const p = this.game.player, party = p.party, dist = u => Math.hypot(u.pos.x - p.pos.x, u.pos.z - p.pos.z);
+    const nearby = this.g.sim.query(p.pos, 60).filter(u => u !== p && (u.kind === 'sim' || u.kind === 'remote') && !u.dead)
+      .sort((a, b) => (b.kind === 'remote') - (a.kind === 'remote') || dist(a) - dist(b)).slice(0, 14)
+      .map(u => ({ id: u.id, name: u.name, cls: u.cls, level: u.level, human: u.kind === 'remote', grouped: !!party && u.party === party, dist: Math.round(dist(u)) }));
+    this.ui.social.set({
+      party: party ? { lead: party.leader === p, members: party.all.map(m => ({ id: m.id, name: m.name, cls: m.cls, level: m.level, leader: m === party.leader, offline: !!m.offline, me: m === p, human: m.kind === 'remote' || m.kind === 'player' })) } : null,
+      nearby, duel: !!p.duel,
+    });
+  }
+  socialAction(a, id) {
+    const it = this.e.interact, p = this.game.player;
+    const u = (p.party?.all || []).find(m => m.id === id) || this.g.sim.units.find(m => m.id === id);
+    if (a === 'leave') it.partyOp('leave');
+    else if (!u) return;
+    else if (a === 'whisper') this.ui.chat.open(`/w ${u.name} `);
+    else if (a === 'invite' || a === 'kick' || a === 'promote') it.partyOp(a, u);
+    else if (a === 'duel') it.duelOp('challenge', u);
+    this.socialT = 0.4;
+  }
+  // ------------------------------------------------------------------ merchants
+  openMerchant(npc) {
+    this.vendor = npc; this.vendorStock = this.game.stock(npc.npcId);
+    this.ui.questDialog.close();
+    this.pushMerchant(); this.ui.merchant.tab = 'buy'; this.ui.merchant.render();
+    this.ui.merchant.open(); if (!this.ui.bags.isOpen) this.ui.bags.open();
+  }
+  pushMerchant() {
+    const g = this.game, it = e => e.gear ? uiItem(e.gear) : uiItem(ITEMS[e.id], e.id);
+    this.ui.merchant.set({ name: this.vendor?.name || 'Merchant', items: (this.vendorStock || []).map(e => ({ item: it(e), price: e.price, count: e.count })),
+      buyback: (g.buybackList || []).map(b => ({ item: it(b), count: b.count, price: b.price })), money: g.player.gold });
+  }
+  merchantBuy(i, n) {
+    const e = this.vendorStock?.[i]; if (!e) return;
+    if (e.gear) { if (this.game.buyGear(e.gear, e.price)) this.vendorStock.splice(i, 1); } // one of each piece
+    else this.game.buy(e.id, n, e.price * n);
+    this.merchantDirty = true;
+  }
+  // ------------------------------------------------------------------ duels, waypoints
+  duelState(d) {
+    if (d.unit !== this.game.player) return;
+    const ui = this.ui;
+    if (d.op === 'count') { if (d.other) ui.alerts.info(`Duel with ${d.other.name} starting!`); ui.alerts.countdown(d.n, '#ffd040'); bus.emit('sound', { name: 'pullTick' }); }
+    else if (d.op === 'go') { ui.alerts.raidWarning('Duel!', '#ff5030'); bus.emit('sound', { name: 'pullGo' }); }
+    else if (d.op === 'out') ui.alerts.raidWarning(`Return to the duel area within ${d.n} seconds or forfeit`, '#ffb040');
+    else if (d.op === 'back') ui.alerts.info('Back in the duel area.');
+  }
+  /** Minimap click (0..1 across the canvas) → the world point under it (the minimap turns with the camera). */
+  minimapToWorld(fx, fy) {
+    if (this.e.mode !== 'world') return null;
+    const p = this.game.player, yaw = this.e.cam.yaw, s = 256 / (this.mmRadius * 2);
+    const rx = (fx - 0.5) * 256, rz = (fy - 0.5) * 256, c = Math.cos(yaw), sn = Math.sin(yaw);
+    return { x: p.pos.x + (rx * c + rz * sn) / s, z: p.pos.z + (-rx * sn + rz * c) / s };
   }
 
   dispose() { for (const o of this.offs) o(); this.ui.dispose(); }

@@ -69,7 +69,7 @@ export class Combat {
     const chk = this.canCast(caster, id, target, point);
     if (!chk.ok) { if (!chk.silent) bus.emit('error', { unit: caster, msg: chk.err }); return false; }
     const instant = !sp.cast && !sp.channel || (sp.instantWith && caster.hasAura(sp.instantWith));
-    if (sp.target === 'enemy' || sp.target === 'ally') this.faceTarget(caster, target);
+    if ((sp.target === 'enemy' || sp.target === 'ally') && !caster.moving) this.faceTarget(caster, target); // a running player keeps running where they were going
     caster.enterCombatIf = sp.target === 'enemy';
     if (!sp.offGcd) { caster.gcd = (sp.gcd ?? GCD) / (1 + caster.stats.haste / 100); caster.gcdMax = caster.gcd; }
     if (instant) {
@@ -133,7 +133,7 @@ export class Combat {
       aura: (t, aid, o = {}) => self.applyAura(caster, t, aid, o),
       weapon: (mult = 1) => self.weaponRoll(caster) * mult,
       enemiesNear: (c, r) => sim.query(c, r).filter(u => caster.isEnemy(u) && !u.dead),
-      alliesNear: (c, r) => sim.query(c, r).filter(u => !u.dead && u.hostile === caster.hostile && (u.kind === 'player' || u.kind === 'sim' || u.kind === 'remote' || u.kind === 'npc' && u.guard)),
+      alliesNear: (c, r) => sim.query(c, r).filter(u => !u.dead && u.hostile === caster.hostile && u !== caster.duelWith && (u.kind === 'player' || u.kind === 'sim' || u.kind === 'remote' || u.kind === 'npc' && u.guard)),
     };
   }
 
@@ -221,7 +221,7 @@ export class Combat {
       } else if (o.spellId !== 'fireBlast') src.removeAura('heatingUp');
     }
     bus.emit('damage', { src, dst, amount: dealt, absorbed, school, crit, spell: o.spell, spellId: o.spellId, dot: !!o.dot, melee: !!o.melee, aoe: !!o.aoe });
-    if (dst.hp <= 0) this.kill(dst, src);
+    if (dst.hp <= 0 && !this.duels?.yields(dst, src)) this.kill(dst, src); // a beaten duellist yields at 1 health
     return dealt;
   }
 
@@ -293,7 +293,7 @@ export class Combat {
       const engaged = u.threat.size > 0 && [...u.threat.keys()].some(o => !o.dead && o.inCombat);
       if (u.hostile) { if (!engaged && !u.target) u.combatT -= dt; else u.combatT = 6; }
       else u.combatT -= dt;
-      if (u.combatT <= 0) { u.inCombat = false; u.threat.clear(); }
+      if (u.combatT <= 0) { u.inCombat = false; u.threat.clear(); if (u.hostile) u.tapper = null; } // out of combat: free for anyone to tag
     }
     // regen
     if (!u.inCombat) {

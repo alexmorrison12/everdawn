@@ -5,6 +5,7 @@ import { Input } from './engine/input.js';
 import { TouchControls } from './engine/touch.js';
 import { OrbitCam } from './engine/camera.js';
 import { G, lambert } from './engine/materials.js';
+import { bus } from './game/events.js';
 import { World } from './world/world.js';
 import { GameState } from './game/game.js';
 import { HUD } from './game/hud.js';
@@ -17,6 +18,7 @@ import { MirrorRaid } from './net/mirrorraid.js';
 import { openLobby, GuestBadge } from './net/lobby.js';
 import { canNetwork } from './net/peer.js';
 import { Interactions } from './game/interact.js';
+import { Waypoints, groundAt } from './game/waypoints.js';
 import { dailyDragon, AFFIXES } from './game/raid/daily.js';
 import { CinematicCam, TITLE_PATH, STAGE } from './game/cinematic.js';
 import { FX } from './fx/fx.js';
@@ -102,7 +104,8 @@ class App {
     this.hud = new HUD(this);
     this.ui = this.hud.ui;
     this.touch.onChat = () => this.ui.chat.open();
-    this.interact = new Interactions(this); // player menu: whisper, invite, inspect, trade, follow
+    this.interact = new Interactions(this); // player menu: whisper, invite, inspect, trade, follow, duel
+    this.waypoints = new Waypoints(this);   // middle-click marks for your group
     this.ui.create.counts = appearanceCounts; // creation-screen options match each race's real palettes
     this.cine = new CinematicCam(this.camera);
     this.wireScreens();
@@ -111,6 +114,7 @@ class App {
     const small = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
     this.settings = { sensitivity: 50, invertY: false, quality: small ? 'medium' : 'high', ...(store.load().settings || {}) };
     this.applySettings(this.settings);
+    this.ui.settings.set(this.settings); // the Game Menu shows what's saved (and saves all of it back)
     this.world.terrain.warm(new THREE.Vector3(10, 0, 150));
     progress(1, 'Entering world');
     this.last = performance.now();
@@ -119,9 +123,11 @@ class App {
     boot.style.opacity = 0; setTimeout(() => boot.remove(), 900);
     // an accidental refresh or Back while hosting/joined: straight back into the same world (see rememberSession)
     const sess = this.readSession(), resumeCh = sess?.char && store.load().chars[sess.char];
-    if (params.get('cls')) this.quickStart(); else if (resumeCh) this.resumeSession(sess, resumeCh); else this.showTitle();
+    let solo = null; try { solo = sessionStorage.getItem('everdawn.solo'); sessionStorage.removeItem('everdawn.solo'); } catch { /* */ }
+    const soloCh = solo && store.load().chars[solo];
+    if (params.get('cls')) this.quickStart(); else if (soloCh) this.startWorld(soloCh); else if (resumeCh) this.resumeSession(sess, resumeCh); else this.showTitle();
     addEventListener('pagehide', () => this.save());
-    addEventListener('beforeunload', e => { if ((this.net && [...this.net.guests.values()].some(g => g.proxy)) || this.guest?.joined) { e.preventDefault(); e.returnValue = ''; } });
+    addEventListener('beforeunload', e => { if (this.leaving) return; if ((this.net && [...this.net.guests.values()].some(g => g.proxy)) || (this.guest?.joined && !this.guest.closed)) { e.preventDefault(); e.returnValue = ''; } });
     const loop = () => { requestAnimationFrame(loop); if (!this.manual) this.frame(); };
     loop();
     setInterval(() => this.save(), 20000);
@@ -185,6 +191,8 @@ class App {
     const st = this.settings;
     this.game.settings.sens = (st.sensitivity ?? 50) / 50;
     this.game.settings.invertY = !!st.invertY;
+    this.game.settings.autoLoot = st.autoLoot !== false;
+    this.input.lockOk = st.mouseLock !== false;
     if (st.quality && st.quality !== this.renderer.quality) this.renderer.setQuality(st.quality, this.world);
     if (this.audio) for (const bus of ['master', 'music', 'sfx', 'ambience']) if (st[bus] !== undefined) { try { this.audio.setVolume(bus, st[bus] / 100); } catch { } }
     const db = store.load(); db.settings = st; store.save(db);
@@ -232,6 +240,13 @@ class App {
     ui.on('login:watch', () => this.watchRaid());
     ui.on('login:together', () => this.openTogether());
     ui.on('login:settings', () => ui.settings.open());
+    ui.on('settingsOpen', () => ui.settings.setActions(this.gameActions()));
+    ui.on('gameAction', id => {
+      if (id === 'logout') this.logout();
+      else if (id === 'leaveWorld') this.leaveFriendsWorld();
+      else if (id === 'stopHosting') this.stopHosting();
+      else if (id === 'host') { ui.settings.close(); if (!this.startHosting()) ui.alerts.error('Hosting needs the web version of the game.'); }
+    });
     ui.on('create:change', st => this.updatePreview(st));
     ui.on('create:back', () => { this.clearPreview(); this.showTitle(); });
     ui.on('create:submit', st => this.createCharacter(st));
@@ -330,6 +345,68 @@ class App {
     if (this.net || this.guest || !canNetwork() || !this.game.player) return false;
     this.net = new HostSession(this, code);
     return true;
+  }
+  /** The Game Menu's session buttons for where you are right now. */
+  gameActions() {
+    if (this.mode !== 'world' && this.mode !== 'raid') return [];
+    if (this.watching) return [];
+    const list = [];
+    if (this.guest) list.push({ id: 'leaveWorld', label: `Leave ${this.guest.hostName}'s World` });
+    else if (this.net) list.push({ id: 'stopHosting', label: 'Stop Hosting' });
+    else if (canNetwork() && this.mode === 'world') list.push({ id: 'host', label: 'Host for Friends' });
+    list.push({ id: 'logout', label: 'Log Out', dark: true });
+    return list;
+  }
+  /** Stop hosting: friends are told the world closed; you keep playing on your own. */
+  stopHosting() {
+    if (!this.net) return;
+    this.ui.settings.close();
+    this.net.close(); this.net = null;
+    this.forgetSession();
+    this.ui.alerts.info('Your world is closed to friends. You are playing on your own.');
+    bus.emit('chat', { ch: 'system', text: 'You stopped hosting. Friends were sent back to their title screen.' });
+  }
+  /** A friend's world is theirs: leaving goes back through a reload (this browser's own realm was set aside). */
+  leaveFriendsWorld() {
+    if (!this.guest) return;
+    this.save();
+    try { sessionStorage.setItem('everdawn.solo', this.game.player?.name || ''); } catch { /* */ }
+    this.reloadClean();
+  }
+  reloadClean() {
+    this.leaving = true;
+    try { this.guest?.dispose(); } catch { /* */ }
+    this.forgetSession();
+    setTimeout(() => location.replace(location.pathname), 150); // drops ?join= so the lobby doesn't open again
+  }
+  /** Log Out: save and go back to the title screen (a friend's world closes for you; a hosted world closes for all). */
+  logout({ force = false } = {}) {
+    if (this.mode !== 'world' && this.mode !== 'raid') return;
+    const g = this.game, p = g.player;
+    if (!force && p && p.inCombat && !p.dead && !p.ghost && !this.guest) { this.ui.alerts.error("You can't log out while in combat."); return; }
+    this.ui.settings.close();
+    this.save();
+    if (this.guest) { this.reloadClean(); return; }
+    if (this.watching) { this.endWatch(null); return; }
+    if (this.raid) this.leaveRaid();
+    if (this.net) { this.net.close(); this.net = null; }
+    this.forgetSession();
+    // put the character away
+    g.duels.forfeit(p);
+    if (p.party) g.social.leave(p, true);
+    this.interact.cancelTrade?.(); this.interact.closeMenu(); this.interact.closeWindow?.();
+    this.waypoints.clearAll();
+    g.sim.remove(p); p.model?.dispose?.(); g.player = null;
+    if (p.ghost) { G.uDesat.value = 0; this.renderer.F.uDesat.value = 0; }
+    this.ui.popups.closeAll(); this.ui.loot.close(); this.ui.death.hide();
+    while (this.ui.closeTop()) { /* close every window */ }
+    this.showTitle();
+  }
+  /** Middle-click / Alt+click in the world: a waypoint for your group where the cursor points. */
+  markAt(sx, sy) {
+    if (this.mode !== 'world') return;
+    const hit = groundAt(this.camera, sx, sy, (x, z) => this.world.heightAt(x, z));
+    if (hit) this.waypoints.place(hit.x, hit.z);
   }
   guestRaidEnter(m) {
     if (this.mode === 'raid' || !this.guest) return;

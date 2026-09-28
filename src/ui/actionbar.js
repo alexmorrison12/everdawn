@@ -20,7 +20,7 @@ class ActionSlot {
     this.proc = h('div', 'proc', el); h('i', 'ants', this.proc);
     this.flash = h('div', 'flash', el);
     el._tip = () => this.d && (this.d.spell ? { type: 'spell', spell: this.d.spell, icon: this.d.icon } : this.d.name ? { type: 'text', title: this.d.name } : null);
-    el.addEventListener('pointerdown', e => { if (e.button === 0) { this.press(); this.ui.emit('action', i); } });
+    el.addEventListener('pointerdown', e => { if (e.button === 0 && !e.shiftKey) { this.press(); this.ui.emit('action', i); } }); // Shift-drag picks it up (books.js)
     this.d = null; this.cdEnd = 0; this.cdDur = 0; this.gEnd = 0; this.fA = 0; this.fB = 0; this._txt = '';
   }
   /** d: null | { icon, name?, spell?, keybind?, cd?: {remaining,duration}, usable?, noResource?, outOfRange?, proc?, active?, count? } */
@@ -151,6 +151,7 @@ export const MICRO = [
   { id: 'bags', icon: 'bag', key: 'B', label: 'Bags' },
   { id: 'spellbook', icon: 'prayer', key: 'P', label: 'Spellbook & Abilities' },
   { id: 'quests', icon: 'letter', key: 'L', label: 'Quest Log' },
+  { id: 'social', icon: 'raceHuman', key: 'O', label: 'Social: your group and players nearby' },
   { id: 'map', icon: 'map', key: 'M', label: 'World Map' },
   { id: 'meter', icon: 'dragonScale', key: 'N', label: 'Damage Meter' },
   { id: 'help', icon: 'unknownHelp', key: 'H', label: 'Help & Keybinds' },

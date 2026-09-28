@@ -32,7 +32,7 @@ export class MobBrain {
     if (this.state === 'evade') {
       const dx = u.home.x - u.pos.x, dz = u.home.z - u.pos.z, d = Math.hypot(dx, dz);
       u.immune = true;
-      if (d < 1.5) { this.state = 'idle'; u.immune = false; u.hp = u.hpMax; u.threat.clear(); u.target = null; u.inCombat = false; u.autoAttack = false; u.auras = []; this.fled = false; }
+      if (d < 1.5) { this.state = 'idle'; u.immune = false; u.hp = u.hpMax; u.threat.clear(); u.target = null; u.inCombat = false; u.tapper = null; u.autoAttack = false; u.auras = []; this.fled = false; }
       else { speed = u.moveSpeed * 1.25; moveX = dx / d; moveZ = dz / d; }
     } else if (u.flag('fear')) {
       if (!this.fearDir || Math.random() < dt * 1.5) { const a = Math.random() * Math.PI * 2; this.fearDir = [Math.cos(a), Math.sin(a)]; }
@@ -131,6 +131,7 @@ export class MobBrain {
   evade() {
     const u = this.u;
     this.state = 'evade'; u.autoAttack = false; u.target = null; u.threat.clear();
+    u.tapper = null; // an evading mob is nobody's anymore (it stays grey otherwise, long after the fight)
     if (u.casting) this.g.combat.interrupt(u);
     bus.emit('evade', { unit: u });
   }

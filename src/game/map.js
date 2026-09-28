@@ -89,12 +89,20 @@ export function drawMinimap(ctx, px, mapCv, center, yaw, markers, radius = 90) {
     let x = px / 2 + rx, y = px / 2 + rz;
     const dist = Math.hypot(rx, rz), lim = px / 2 - 7;
     if (dist > lim) { if (!m.edge) continue; x = px / 2 + rx / dist * lim; y = px / 2 + rz / dist * lim; }
-    drawMarker(ctx, m.kind, x, y, m.color);
+    drawMarker(ctx, m.kind, x, y, m.color, m);
   }
 }
 
-export function drawMarker(ctx, kind, x, y, color) {
+export function drawMarker(ctx, kind, x, y, color, m = {}) {
   ctx.save();
+  if (kind === 'wp') { // a group waypoint: a pin in the placer's class colour
+    ctx.fillStyle = color || '#ffd35a'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(x, y + 2); ctx.lineTo(x - 5.5, y - 7); ctx.arc(x, y - 9, 5.8, Math.PI * 0.8, Math.PI * 2.2); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y - 9, 2, 0, 7); ctx.fill();
+  } else if (kind === 'ping') { // a minimap ping: two expanding rings
+    const r = m.r || 0;
+    for (const k of [0, 0.35]) { const t = (r * 2 + k) % 1; ctx.strokeStyle = color || '#ffd35a'; ctx.globalAlpha = 1 - t; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, 3 + t * 16, 0, 7); ctx.stroke(); }
+  }
   if (kind === 'quest' || kind === 'turnin') {
     ctx.font = 'bold 15px "Roboto Condensed", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 3; ctx.strokeStyle = '#000'; ctx.strokeText(kind === 'quest' ? '!' : '?', x, y); ctx.fillStyle = '#ffd200'; ctx.fillText(kind === 'quest' ? '!' : '?', x, y);

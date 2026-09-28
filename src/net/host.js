@@ -10,6 +10,7 @@ import { HostTransport } from './peer.js';
 import { PUBLIC_URL } from '../meta/remote.js';
 import { enc, unitSpawn } from './codec.js';
 import { lobbyStyles } from './lobby.js';
+import { Party } from '../game/party.js';
 
 const RANGE = 150;                 // how far around a guest units are streamed
 const SNAP_EVERY = 1 / 12;         // seconds between state snapshots
@@ -18,7 +19,8 @@ const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 // events every nearby guest sees; events only the guest they concern sees; raid-wide events while in the raid
 const WORLD = new Set(['damage', 'heal', 'miss', 'swing', 'spell_go', 'spell_hit', 'cast_start', 'cast_stop', 'death', 'aura_apply', 'aura_remove',
   'fx', 'fx_projectile', 'fx_cone', 'fx_ground', 'fx_ground_stop', 'sound', 'say', 'bubble', 'emote', 'evade', 'anim']);
-const OWNER = new Set(['charge', 'blink', 'proc', 'error']);
+const OWNER = new Set(['charge', 'blink', 'proc', 'error', 'duel_state']);
+const PARTY = new Set(['waypoint']);        // events only the unit's group sees
 const RAIDWIDE = new Set(['raid_warning', 'boss_timer', 'boss_phase', 'raid_state', 'zone_text', 'music', 'fade', 'shake', 'raid_roster']);
 const CHAT_NEAR = { say: 45, emote: 45, yell: 160 };
 const CHAT_ALL = new Set(['general', 'trade', 'lfg', 'localdefense', 'party', 'raid', 'rw', 'loot']);
@@ -28,6 +30,7 @@ export class HostSession {
     this.app = app; this.code = null;
     this.guests = new Map();       // relay id → { id, name, proxy, known: Map(unitId → row signature), out: [], snapT }
     this.byProxy = new Map();      // proxy unit → guest
+    this.lost = new Map();         // name → { party, at }: a friend who dropped (a refresh) gets their group back
     this.acc = 0; this.todT = 0;
     this.net = new HostTransport({
       onOpen: code => {
@@ -105,6 +108,15 @@ export class HostSession {
       case 'chat': this.chat(gst, m); return;
       case 'emote': if (p && !p.dead) { p.model?.play?.(m.anim); if (m.text) this.g.social.post('emote', null, `${p.name} ${m.text}`, { unit: p, $from: gst.id }); } return;
       case 'bye': this.leave(gst.id); return;
+      case 'party': this.partyOp(gst, m); return;
+      case 'duel': {
+        if (!p) return;
+        const d = this.g.duels;
+        if (m.op === 'challenge') d.challenge(p, this.who(m));
+        else if (m.op === 'accept') d.accept(p); else if (m.op === 'decline') d.decline(p); else if (m.op === 'yield') d.forfeit(p);
+        return;
+      }
+      case 'wp': if (p) bus.emit('waypoint', m.clear ? { unit: p, clear: true, $from: gst.id } : { unit: p, x: +m.x || 0, z: +m.z || 0, ping: !!m.ping, $from: gst.id }); return;
       case 'inspect': { const u = this.unit(m.id); if (u && this.app.interact) this.send(gst, { t: 'inspect', data: this.app.interact.inspectData(u) }); return; }
       case 'trade': {
         if (!p) return;
@@ -115,6 +127,27 @@ export class HostSession {
       }
     }
   }
+  /** A friend's group requests: the same Social calls the host's own buttons make. */
+  partyOp(gst, m) {
+    const p = gst.proxy, soc = this.g.social; if (!p) return;
+    const who = this.who(m);
+    switch (m.op) {
+      case 'invite': if (!who) soc.tell(p, m.name ? `No player named '${m.name}' is currently playing.` : 'Invite whom?'); else soc.invite(p, who); return;
+      case 'accept': soc.acceptInvite(p); return;
+      case 'decline': soc.declineInvite(p); return;
+      case 'leave': if (p.party) soc.leave(p); else soc.tell(p, "You aren't in a group."); return;
+      case 'kick': soc.kick(p, who); return;
+      case 'promote': soc.promote(p, who); return;
+    }
+  }
+  /** The unit a request names: by id, else by name (players, friends and SimPlayers). */
+  who(m) {
+    if (m.id) { const u = this.unit(m.id) || (m.id === this.me?.id ? this.me : null) || this.partyUnits().find(x => x.id === m.id); if (u) return u; }
+    return m.name ? this.g.social.findPlayer(m.name) || this.partyUnits().find(x => x.name.toLowerCase() === String(m.name).toLowerCase()) || null : null;
+  }
+  partyUnits() { return [...new Set([this.me, ...this.proxies()].flatMap(u => u?.party?.all || []))]; } // incl. friends who are offline
+  partyInvite(to, from) { const gst = this.byProxy.get(to); if (gst) this.send(gst, { t: 'pinv', from: from.name }); }
+  duelInvite(to, from) { const gst = this.byProxy.get(to); if (gst) this.send(gst, { t: 'dreq', from: from.name }); }
   get combat() { return this.raiding ? this.app.raid.combat : this.g.combat; }
   ground(x, z) { return this.raiding ? this.app.raid.lair.heightAt(x, z) : this.g.world.heightAt(x, z); }
   unit(id) { if (!id) return null; for (const u of this.sim.units) if (u.id === id) return u; return null; }
@@ -132,11 +165,20 @@ export class HostSession {
     g.addModel(u, ['humanoid', { race: u.race, sex: u.sex, cls: u.cls, ...u.appearance, gearTier: ch.look || 0, seed: u.appearance.seed ?? 7 }]);
     g.sim.add(u);
     gst.proxy = u; gst.known.clear(); this.byProxy.set(u, gst);
-    // one group for all the humans (a full party makes room by dropping a SimPlayer)
-    const soc = g.social, party = soc.ensureParty();
-    if (party.members.length >= 4) { const sim = party.members.find(m => m.kind !== 'remote'); if (sim) soc.removeFromParty(sim); }
-    party.members.push(u); u.party = party;
-    soc.post('system', null, `${u.name} joins the party.`); bus.emit('party_changed', { party });
+    // back from a refresh: rejoin the group they dropped out of. Arriving for the first time: group up with the host
+    // (a full group makes room by dropping a SimPlayer). Either can leave or invite later like any other group.
+    const soc = g.social, lost = this.lost.get(u.name); this.lost.delete(u.name);
+    const was = lost?.unit, party0 = was?.offline && was.party;
+    if (party0) { // take the offline slot back
+      party0.all[party0.all.indexOf(was)] = u; u.party = party0; was.party = null;
+      if (party0.leader === was) party0.leader = u;
+      soc.tellParty(party0, `${u.name} is back online.`); soc.changed();
+    } else if (host && !lost) {
+      let party = host.party;
+      if (!party) { party = new Party(host); host.party = party; }
+      if (party.full) { const sim = party.all.find(m => m.kind === 'sim'); if (sim) soc.leave(sim); }
+      if (!party.full) soc.join(party, u);
+    }
     this.app.ui.alerts.info(`${u.name} has joined your world!`);
     bus.emit('sound', { name: 'questComplete' });
     this.send(gst, { t: 'welcome', you: u.id, host: host?.id, hostName: host?.name, tod: this.app.world.tod, pos: [r1(x), r1(z)], raid: this.raiding ? this.raidInfo() : null });
@@ -145,7 +187,18 @@ export class HostSession {
   removeProxy(gst) {
     const u = gst.proxy; if (!u) return;
     const soc = this.g.social;
-    if (u.party) { u.party.members = u.party.members.filter(m => m !== u); if (!u.party.members.length) { this.me.party = null; soc.party = null; } bus.emit('party_changed', { party: soc.party }); }
+    this.g.duels?.forfeit(u);
+    this.app.waypoints?.remove(u);
+    for (const [to, inv] of soc.invites) if (to === u || inv.from === u) soc.invites.delete(to);
+    this.lost.set(u.name, { unit: u, at: performance.now() }); // back after a refresh: grouped as they were, not auto-grouped again
+    if (u.party && this.closing) soc.leave(u, true); // the world is closing: nobody is coming back
+    else if (u.party) { // like WoW, a friend who drops stays in the group (offline) for a while: a refresh puts them back in their slot
+      const party = u.party;
+      u.offline = true;
+      if (party.leader === u) { const next = party.humans().find(m => !m.offline); if (next) { party.leader = next; soc.tellParty(party, `${next.name} is now the group leader.`); } }
+      soc.tellParty(party, `${u.name} has gone offline.`); soc.changed();
+      setTimeout(() => { if (u.offline && u.party) soc.leave(u); }, 180000);
+    }
     for (const s of [this.g.sim, this.app.raid?.sim]) s?.remove(u);
     if (this.app.raid) this.app.raid.raiders = this.app.raid.raiders.filter(m => m !== u);
     for (const m of this.sim.units) { m.threat?.delete(u); if (m.target === u) m.target = null; }
@@ -193,6 +246,7 @@ export class HostSession {
       return;
     }
     const ch = ['say', 'yell', 'party', 'general', 'trade', 'lfg', 'raid'].includes(m.ch) ? m.ch : 'say';
+    if (ch === 'party' && !p.party) { soc.tell(p, "You aren't in a group."); return; }
     soc.post(ch, p, text, { $from: gst.id });
     if (ch === 'say' || ch === 'yell') bus.emit('bubble', { unit: p, text, $from: gst.id });
     soc.replyTo?.(p, ch, text);
@@ -203,6 +257,7 @@ export class HostSession {
     if (!d || d.$net) return;
     if (type === 'chat') return this.onChat(d);
     if (OWNER.has(type)) { const gst = this.byProxy.get(d.unit); if (gst) this.queue(gst, type, d); return; }
+    if (PARTY.has(type)) { const u = d.unit; for (const gst of this.guests.values()) if (gst.proxy && gst.id !== d.$from && gst.proxy !== u && u?.party && gst.proxy.party === u.party) this.queue(gst, type, d); return; }
     const raid = this.raiding;
     if (raid && RAIDWIDE.has(type)) { for (const gst of this.guests.values()) if (gst.proxy) this.queue(gst, type, d); return; }
     if (!WORLD.has(type)) return;
@@ -217,9 +272,10 @@ export class HostSession {
   }
   onChat(d) {
     if (d.$toGuest) { const gst = this.guests.get(d.$toGuest); if (gst?.proxy) this.queue(gst, 'chat', { ...d, to: 'you', hideLocal: undefined, $toGuest: undefined }); return; }
-    if (d.hideLocal) return;
+    if (d.hideLocal || d.$local) return;
     for (const gst of this.guests.values()) {
       if (!gst.proxy || gst.id === d.$from) continue;
+      if (d.ch === 'party' && !(d.unit?.party && d.unit.party === gst.proxy.party)) continue; // party chat stays in the group
       const near = CHAT_NEAR[d.ch];
       if (near) { const at = d.unit?.pos; if (at && Math.hypot(at.x - gst.proxy.pos.x, at.z - gst.proxy.pos.z) > near && !this.raiding) continue; }
       else if (!CHAT_ALL.has(d.ch)) continue;                    // system, whispers, guild: the host's own
@@ -255,7 +311,7 @@ export class HostSession {
       if (d > RANGE && !(party && u.party === party) && u !== host && !this.raiding) continue;
       seen.add(u.id);
       if (!gst.known.has(u.id)) { sp.push(unitSpawn(u)); gst.known.set(u.id, ''); }
-      const row = this.row(u, host), sig = row.join('|');
+      const row = this.row(u, me), sig = row.join('|');
       if (gst.known.get(u.id) !== sig) { rows.push(row); gst.known.set(u.id, sig); }
     }
     const gone = []; for (const id of gst.known.keys()) if (!seen.has(id)) { gone.push(id); gst.known.delete(id); }
@@ -263,7 +319,7 @@ export class HostSession {
     if (rows.length) out.u = rows;
     if (gone.length) out.de = gone;
     out.me = this.meState(me);
-    const pa = party ? [host, ...party.members].filter(m => m && m !== me).map(m => m.id).join(',') : '';
+    const pa = party ? `${party.leader?.id || 0};${party.all.map(m => m.id).join(',')}` : '';
     if (pa !== gst.pa) { out.pa = pa; gst.pa = pa; }
     if (tod !== undefined) out.tod = tod;
     if (this.raiding) { const rs = this.raidState(gst); if (rs) out.rs = rs; }
@@ -281,8 +337,8 @@ export class HostSession {
     return rs;
   }
   // [id, x, y, z, facing, hp, hpMax, speed, flags, target, castId, castT, castDur, level, auras, power]
-  row(u, host) {
-    const tapGroup = u.tapper && (u.tapper === host || u.tapper === host?.party || u.tapper.kind === 'remote');
+  row(u, me) {
+    const tapGroup = !!u.tapper && (u.tapper === me || (!!me.party && u.tapper === me.party)); // "yours" means this friend's (or their group's)
     const flags = (u.dead ? 1 : 0) | (u.inCombat ? 2 : 0) | (u.casting?.channel ? 4 : 0) | (tapGroup ? 8 : 0) | (u.tapper && !tapGroup ? 16 : 0)
       | (u.stateAnim.sit ? 32 : 0) | (u.swimming ? 64 : 0) | (u.flying ? 256 : 0) | (u.afk ? 512 : 0) | (u.ghost ? 1024 : 0);
     const c = u.casting;
@@ -299,6 +355,7 @@ export class HostSession {
       hp: Math.round(p.hp), hm: p.hpMax, pw: Math.round(p.power), pm: p.powerMax, dead: p.dead ? 1 : 0, ic: p.inCombat ? 1 : 0,
       cast: c ? [c.id, r2(c.t), r2(c.dur), c.channel ? 1 : 0, c.target?.id || 0] : 0, gcd: r2(p.gcd), gm: r2(p.gcdMax || 1.5), cds,
       au: p.auras.map(a => [a.id, r1(a.rem), r1(a.dur), a.stacks || 1, Math.round(a.absorb || 0), a.src?.id || 0]), aa: p.autoAttack ? 1 : 0,
+      du: p.duel ? [(p.duel.a === p ? p.duel.b : p.duel.a).id, p.duel.live ? 1 : 0, r1(p.duel.x), r1(p.duel.z)] : 0,
     };
   }
 
@@ -345,7 +402,14 @@ export class HostSession {
   proxies() { return [...this.guests.values()].map(g => g.proxy).filter(Boolean); }
   resetKnown() { for (const gst of this.guests.values()) { gst.known.clear(); gst.pa = null; } }
   force(u, x, z, extra = {}) { const gst = this.byProxy.get(u); if (gst) this.send(gst, { t: 'force', x: r1(x), z: r1(z), ...extra }); }
-  dispose() { this.untap(); this.net.close(); this.badge.remove(); }
+  /** Stop hosting: tell friends the world is closing (so they stop trying to reconnect) and take their avatars away. */
+  close() {
+    this.closing = true;
+    this.broadcast({ t: 'closing', host: this.me?.name });
+    for (const gst of [...this.guests.values()]) this.leave(gst.id);
+    setTimeout(() => this.dispose(), 400);
+  }
+  dispose() { if (this.disposed) return; this.disposed = true; this.untap(); this.net.close(); this.badge.remove(); }
 }
 
 // A small corner badge: who's here and the invite link to share.

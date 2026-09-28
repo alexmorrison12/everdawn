@@ -17,8 +17,11 @@ import { bus } from './events.js';
 import { RNG } from '../core/noise.js';
 import { G } from '../engine/materials.js';
 import { Social } from './social.js';
+import { Duels } from './duel.js';
 
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+const AREA_LOOT = 12;                          // looting one corpse loots every corpse of yours this close
+export const PRICE = { bread: 25, water: 25, potionHealth: 100, potionMana: 100 }; // copper, each
 export const fmtMoney = c => { const g = Math.floor(c / 10000), s = Math.floor(c / 100) % 100, cc = c % 100; return [g && `${g}g`, s && `${s}s`, (cc || (!g && !s)) && `${cc}c`].filter(Boolean).join(' '); };
 
 export class GameState {
@@ -35,6 +38,7 @@ export class GameState {
     this.time = 0;
     this.settings = { sens: 1, invertY: false };
     this.social = new Social(this);
+    this.duels = new Duels(this);
     bus.on('death', e => this.onDeath(e));
     bus.on('charge', e => this.onCharge(e));
     bus.on('blink', e => this.onBlink(e));
@@ -88,6 +92,7 @@ export class GameState {
   createPlayer(ch) {
     const P = PLACES.village;
     const u = new Unit({ name: ch.name, kind: 'player', hostile: false, level: ch.level || 1, cls: ch.cls, race: ch.race, sex: ch.sex, pos: V3(P.x + 2, 0, P.z - 8) });
+    u.gravity = 19.3; // WoW's: a jump peaks about 1.6 m up and lasts ~0.8 s
     u.appearance = ch.appearance || {};
     u.xp = ch.xp || 0; u.gold = ch.gold ?? 0;
     u.equip = {}; u.bags = []; u.quests = []; u.questsDone = new Set(ch.questsDone || []);
@@ -104,6 +109,7 @@ export class GameState {
     this.player = u;
     this.pc = new PlayerController(this, u);
     this.pc.setBar(CLASSES[u.cls].bar.filter(id => SPELLS[id].learn <= u.level));
+    if (ch.bar) { this.pc.bar = [...ch.bar.slice(0, 10), null, null]; this.pc.custom = true; }
     if (!ch.bags) { this.addItem('hearthstone', 1); this.addItem(u.powerType === 'mana' ? 'water' : 'bread', 5); this.addItem('potionHealth', 2); }
     this.cam.yaw = u.facing; this.cam._first = true;
     if (ch.bags) u.bags = ch.bags.map(b => ({ ...b }));
@@ -117,7 +123,15 @@ export class GameState {
   }
 
   // "Jump to Raid": a fair, identical level-10 kit for everyone (blue quest gear), no leveling required
-  refreshBar() { const u = this.player; this.pc.setBar(CLASSES[u.cls].bar.filter(id => SPELLS[id].learn <= u.level)); }
+  refreshBar() {
+    const u = this.player, learned = CLASSES[u.cls].bar.filter(id => SPELLS[id].learn <= u.level);
+    if (!this.pc.custom) this.pc.setBar(learned); // your own layout stays yours (level-ups fill new abilities into gaps)
+  }
+  addToBar(ids) {
+    const bar = this.pc.bar;
+    for (const id of ids) { const i = bar.findIndex((x, k) => !x && k < 10); if (i >= 0) bar[i] = id; }
+    bus.emit('bar_changed', { bar });
+  }
   premadeGear(cls) {
     const rng = new RNG('everdawn-premade-' + cls);
     const eq = {};
@@ -256,15 +270,61 @@ export class GameState {
     }
     u.bags.push({ gear: item, count: 1 }); bus.emit('bags_changed', { unit: u });
   }
+  // ------------------------------------------------------------ merchants
+  /** What a merchant pays for a bag entry (copper, whole stack); 0 = they won't take it (quest items, the hearthstone). */
+  sellValue(b) {
+    if (!b) return 0;
+    if (b.gear) return Math.max(1, Math.round((b.gear.sell || 1) * 25));
+    const d = ITEMS[b.id]; if (!d || d.quest || b.id === 'hearthstone') return 0;
+    const each = d.sell ? d.sell * 25 : PRICE[b.id] ? Math.floor(PRICE[b.id] / 4) : 0;
+    return each * (b.count || 1);
+  }
+  sellItem(i) {
+    const u = this.player, b = u.bags[i]; if (!b) return 0;
+    const v = this.sellValue(b);
+    if (!v) { bus.emit('error', { unit: u, msg: "The merchant doesn't want that item." }); return 0; }
+    u.bags.splice(i, 1); u.gold += v;
+    this.buybackList = [{ ...b, price: v }, ...(this.buybackList || [])].slice(0, 12);
+    bus.emit('sound', { name: 'clink' });
+    bus.emit('bags_changed', { unit: u });
+    this.checkQuestObjectives();
+    return v;
+  }
   sellJunk() {
     const u = this.player; let total = 0;
-    u.bags = u.bags.filter(b => { const d = ITEMS[b.id]; if (d?.rarity === 'poor') { total += (d.sell || 1) * b.count * 25; return false; } if (b.gear && b.gear.cls !== u.cls) { total += b.gear.sell * 25; return false; } return true; });
-    if (total) { u.gold += total; bus.emit('money', { amount: total }); bus.emit('chat', { ch: 'system', text: `You sold your junk for ${fmtMoney(total)}.` }); bus.emit('bags_changed', { unit: u }); }
+    for (let i = u.bags.length - 1; i >= 0; i--) { const d = ITEMS[u.bags[i].id]; if (d?.rarity === 'poor') total += this.sellItem(i); }
+    if (total) bus.emit('chat', { ch: 'system', text: `You sold your junk for ${fmtMoney(total)}.` });
     return total;
+  }
+  buyback(i) {
+    const u = this.player, e = this.buybackList?.[i]; if (!e) return false;
+    if (u.gold < e.price) { bus.emit('error', { unit: u, msg: "You don't have enough money." }); return false; }
+    u.gold -= e.price; this.buybackList.splice(i, 1);
+    const { price, ...b } = e; u.bags.push(b);
+    bus.emit('bags_changed', { unit: u }); this.checkQuestObjectives();
+    return true;
+  }
+  /** A merchant's stock for this character: [{ id?, gear?, price, count }]. The smith forges pieces for your class. */
+  stock(npcId) {
+    const def = NPCS[npcId], u = this.player;
+    if (def?.vendor === 'gear') {
+      const rng = new RNG('smith-' + u.cls + '-' + u.level), L = Math.max(2, u.level + 1);
+      return ['weapon', 'chest', 'legs', 'head', 'shoulders', 'feet'].map((slot, i) => {
+        const g = makeGear(rng, u.cls, L, i < 2 ? 'uncommon' : 'common', slot);
+        return { gear: g, price: Math.round((g.sell || 5) * 25 * 5), count: 1 };
+      });
+    }
+    return (def?.vendor || []).map(id => ({ id, price: PRICE[id] || 50, count: 1 }));
+  }
+  buyGear(g, price) {
+    const u = this.player;
+    if (u.gold < price) { bus.emit('error', { unit: u, msg: "You don't have enough money." }); return false; }
+    u.gold -= price; u.bags.push({ gear: g, count: 1 }); bus.emit('bags_changed', { unit: u });
+    return true;
   }
   buy(id, n, price) {
     const u = this.player;
-    if (u.gold < price) { bus.emit('error', { unit: u, msg: "You don't have enough money" }); return false; }
+    if (u.gold < price) { bus.emit('error', { unit: u, msg: "You don't have enough money." }); return false; }
     u.gold -= price; this.addItem(id, n); bus.emit('money', { amount: -price }); return true;
   }
   equip(item) {
@@ -307,7 +367,7 @@ export class GameState {
       this.levelStats(u);
       u.hp = u.hpMax; if (u.powerType === 'mana') u.power = u.powerMax;
       const learned = CLASSES[u.cls].bar.filter(id => SPELLS[id].learn === u.level);
-      this.pc.setBar(CLASSES[u.cls].bar.filter(id => SPELLS[id].learn <= u.level));
+      if (this.pc.custom) this.addToBar(learned); else this.pc.setBar(CLASSES[u.cls].bar.filter(id => SPELLS[id].learn <= u.level));
       bus.emit('level_up', { unit: u, level: u.level, learned });
     }
     if (u.level >= MAX_LEVEL) u.xp = 0;
@@ -347,6 +407,17 @@ export class GameState {
     bus.emit('quest_complete', { quest: q });
     this.giveXP(q.xp, 'quest');
     this.refreshQuestMarkers();
+  }
+  abandonQuest(id) {
+    const u = this.player, a = u.quests.find(x => x.id === id); if (!a) return;
+    const q = QUEST[id];
+    u.quests = u.quests.filter(x => x !== a);
+    // quest-only items for it go too (unless another quest still wants them)
+    const still = new Set(u.quests.flatMap(x => QUEST[x.id].obj.filter(o => o.type === 'item').map(o => o.item)));
+    for (const o of q.obj) if (o.type === 'item' && ITEMS[o.item]?.quest && !still.has(o.item)) this.removeItem(o.item, this.countItem(o.item));
+    if (q.startItem) this.removeItem(q.startItem, this.countItem(q.startItem));
+    bus.emit('chat', { ch: 'system', text: `${q.title} abandoned.` });
+    this.refreshQuestMarkers(); bus.emit('quests_changed', {});
   }
   questRewardChoices(q) {
     if (q.rewards !== 'gear' && q.rewards !== 'rare') return null;
@@ -447,9 +518,15 @@ export class GameState {
       this.respawns.push({ spot, t: spot.named ? 90 : (near && alive < 0.6 ? 12 : 24) + this.rng.next() * 12 });
     }
   }
-  lootCorpse(u) {
-    if (!u.lootable || !u.loot) { bus.emit('error', { unit: this.player, msg: 'You cannot loot that corpse' }); return; }
-    bus.emit('loot_open', { corpse: u, items: u.loot });
+  /** Loot a corpse, and with it every lootable corpse of yours nearby (area loot). auto: straight into your bags. */
+  lootCorpse(u, { auto = false } = {}) {
+    const p = this.player;
+    const near = this.corpses.map(c => c.u).filter(c => c !== u && c.lootable && c.loot?.length && Math.hypot(c.pos.x - p.pos.x, c.pos.z - p.pos.z) < AREA_LOOT);
+    if (!u.lootable || !u.loot?.length) { if (!near.length) { bus.emit('error', { unit: p, msg: 'You cannot loot that corpse' }); return; } u = near.shift(); }
+    const list = [u, ...near];
+    this.lootSession = list;
+    if (auto) { for (const c of list) this.lootAll(c); this.lootSession = null; return; }
+    bus.emit('loot_open', { corpse: u, corpses: list, items: list.flatMap(c => c.loot.map(l => ({ ...l, from: c, ref: l }))) });
   }
   takeLoot(u, idx) {
     const l = u.loot[idx]; if (!l) return;
@@ -458,7 +535,7 @@ export class GameState {
     else if (l.gear) { this.addGear(l.gear); bus.emit('loot_item', { item: l.gear }); }
     else { this.addItem(l.id, l.count); bus.emit('loot_item', { id: l.id, count: l.count }); }
     u.loot.splice(idx, 1);
-    if (!u.loot.length) { u.lootable = false; bus.emit('loot_close', {}); }
+    if (!u.loot.length) { u.lootable = false; if (!this.lootSession?.some(c => c.loot?.length)) bus.emit('loot_close', {}); }
     this.checkQuestObjectives();
   }
   lootAll(u) { while (u.loot && u.loot.length) this.takeLoot(u, 0); }
@@ -534,6 +611,7 @@ export class GameState {
     for (const u of this.sim.units) if (u.brain && !u.dead) u.brain.update(dt);
     this.combat.update(dt);
     this.social?.update(dt);
+    this.duels.update(dt);
     // corpses & respawns
     for (let i = this.corpses.length - 1; i >= 0; i--) {
       const c = this.corpses[i]; c.t += dt;

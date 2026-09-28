@@ -19,7 +19,7 @@ export const NPCS = {
   guard1: { name: 'Dawnhollow Guard', race: 'human', sex: 'm', outfit: 'guard', pos: [16, 108], face: [14, 80], guard: true },
   guard2: { name: 'Dawnhollow Guard', race: 'dwarf', sex: 'm', outfit: 'guard', pos: [-32, 143], face: [-60, 135], guard: true },
   guard3: { name: 'Dawnhollow Guard', race: 'human', sex: 'f', outfit: 'guard', pos: [52, 144], face: [80, 130], guard: true },
-  smith: { name: 'Blacksmith Hargan', title: 'Weapons & Armor', race: 'orc', sex: 'm', outfit: 'villager', pos: [34, 168], face: [10, 150],
+  smith: { name: 'Blacksmith Hargan', title: 'Weapons & Armor', race: 'orc', sex: 'm', outfit: 'villager', pos: [34, 168], face: [10, 150], vendor: 'gear',
     greet: 'You break it, I fix it. You break it again, I charge double.' },
 };
 

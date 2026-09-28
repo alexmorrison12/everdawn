@@ -28,8 +28,9 @@ export class OrbitCam {
     this.smoothTarget.x = damp(this.smoothTarget.x, focus.x, 22, dt);
     this.smoothTarget.z = damp(this.smoothTarget.z, focus.z, 22, dt);
     this.smoothTarget.y = damp(this.smoothTarget.y, focus.y, 12, dt);
-    // smart follow: swing behind the character while it moves and the mouse is free
-    if (moving && !dragging) this.yaw = dampAngle(this.yaw, facing, 2.2, dt);
+    // smart follow (WoW's default): while you move and the mouse is free, swing in behind you. Fast when far off,
+    // easing in at the end, so a turn never leaves the camera lagging behind the run.
+    if (moving && !dragging) { const d = wrapAngle(facing - this.yaw), step = Math.min(Math.abs(d), (1.8 + Math.abs(d) * 3.2) * dt); this.yaw += Math.sign(d) * step; }
     this.dist = damp(this.dist, this.distTarget, 10, dt);
     const cy = Math.cos(this.pitch), sy = Math.sin(this.pitch);
     const dir = new THREE.Vector3(Math.sin(this.yaw) * cy, sy, Math.cos(this.yaw) * cy); // from target to camera

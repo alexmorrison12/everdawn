@@ -88,9 +88,11 @@ export class Sim {
       u.vy = 0; u.pos.y += (surf - u.pos.y) * Math.min(1, dt * 6); u.grounded = false;
       return;
     }
-    u.vy = (u.vy || 0) - 24 * dt;
+    const was = u.grounded;
+    u.vy = (u.vy || 0) - (u.gravity ?? 24) * dt;
     u.pos.y += u.vy * dt;
     if (u.pos.y <= g) { if (u.vy < -12 && u.onLand) u.onLand(u.vy); u.pos.y = g; u.vy = 0; u.grounded = true; }
+    else if (was && u.vy <= 0 && u.pos.y - g < 0.6) { u.pos.y = g; u.vy = 0; u.grounded = true; } // running downhill: stay on the ground
     else u.grounded = u.pos.y - g < 0.05;
   }
 }
