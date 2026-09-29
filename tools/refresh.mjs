@@ -28,7 +28,7 @@ console.log('after reload', JSON.stringify(await state()));
 console.log(await click('Enter World')); await new Promise(r => setTimeout(r, 800));
 console.log('enter', JSON.stringify(await state()));
 console.log('popup dom', await p.evaluate(() => { const els = [...document.querySelectorAll('[class*=popup], [class*=dialog]')]; return els.map(e => e.className + ' vis=' + !!e.offsetParent + ' txt=' + e.textContent.slice(0, 60)).slice(0, 6).join(' | '); }));
-console.log(await click('Continue')); await new Promise(r => setTimeout(r, 3000));
+console.log(await p.evaluate(() => { const b = document.querySelector('.evd-login .chars .cbtns .evd-btn.primary'); b?.click(); return !!b; })); await new Promise(r => setTimeout(r, 3000));
 console.log('continue', JSON.stringify(await state()));
 console.log('errors', JSON.stringify(errs.slice(0, 10)));
 await b.close();

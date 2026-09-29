@@ -77,6 +77,18 @@
 .evd-login .realms .rr.dead { color: #6a6660; }
 .evd-login .realms .rr.dead:hover { color: #8a847a; }
 .evd-login .realms .rbtns { display: flex; justify-content: flex-end; margin-top: 12px; }
+/* character select */
+.evd-login .chars { left: 50%; top: 50%; translate: -50% -50%; width: 540px; max-width: calc(100% - 32px); padding: 34px 20px 16px; z-index: 5; }
+.evd-login .chars .clist { display: flex; flex-direction: column; gap: 6px; }
+.evd-login .chars .crow { display: grid; grid-template-columns: 44px 1fr auto; align-items: center; gap: 12px; min-height: 56px; padding: 6px 12px 6px 6px; border-radius: 4px; background: rgba(0,0,0,.38); box-shadow: inset 0 0 0 1px rgba(255,210,120,.15); }
+.evd-login .chars .crow:hover { background: rgba(255,220,140,.1); }
+.evd-login .chars .crow.sel { background: linear-gradient(90deg, rgba(255,200,80,.28), rgba(255,200,80,.08)); box-shadow: inset 0 0 0 1px rgba(255,210,90,.6); }
+.evd-login .chars .crow img { width: 44px; height: 44px; border-radius: 4px; box-shadow: 0 0 0 1px #000, 0 0 0 2px #6a5028; }
+.evd-login .chars .cn { font: 700 17px/1.2 var(--serif); text-shadow: var(--ol); }
+.evd-login .chars .cl { font: 500 13px/1.35 var(--font); color: #e8dcc0; text-shadow: var(--ol); }
+.evd-login .chars .cz { font: 500 12px/1.3 var(--font); color: #a89c80; text-align: right; text-shadow: var(--ol); }
+.evd-login .chars .crow.empty { display: flex; justify-content: center; min-height: 40px; font: 500 13px var(--font); color: #7a7060; background: rgba(0,0,0,.18); box-shadow: inset 0 0 0 1px rgba(255,210,120,.08); }
+.evd-login .chars .cbtns { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 14px; }
 .evd-login .realms .rnote { margin-top: 10px; font: 500 12px/1.3 var(--font); color: #a89c80; text-align: center; }
 
 /* ---------------------------------------------------------------------------- character creation */

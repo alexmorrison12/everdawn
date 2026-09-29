@@ -425,9 +425,31 @@ await step('Game Menu: Log Out goes to the title; Continue comes back with your 
   await wait(600);
   const out = await ev(() => ({ mode: __game.mode, player: !!__game.game.player }));
   await ev(() => __game.ui.emit('login:enter')); await wait(500);
-  await ev(() => [...document.querySelectorAll('.evd-popup button')].find(b => b.textContent === 'Continue')?.click());
+  await ev(() => document.querySelector('.evd-login .chars .cbtns .evd-btn.primary')?.click());
   await wait(1500);
   return { buttons, out, back: await ev(() => ({ mode: __game.mode, name: __game.game.player?.name, bar: __game.game.pc.bar.slice(0, 10) })) };
+});
+
+await step('character select: five slots, pick any character, delete one, no sixth', async () => {
+  // four more characters on this browser (saved like any other), then the list at Enter World
+  await ev(() => { const A = __game; A.game.player.inCombat = false; A.logout({ force: true }); const db = JSON.parse(localStorage.getItem('everdawn.v1')); const me = db.chars.Featura;
+    [['Brakka', 'warrior', 'orc', 7, 'crown'], ['Lumen', 'priest', 'dwarf', 3, 'vale'], ['Vyss', 'mage', 'elf', 10, 'vale'], ['Tamsyn', 'warrior', 'human', 1, 'vale']].forEach(([name, cls, race, level, zone], i) => { db.chars[name] = { name, cls, race, sex: 'f', level, zone, created: me.created + 1000 + i, appearance: {} }; });
+    localStorage.setItem('everdawn.v1', JSON.stringify(db)); A.ui.emit('login:enter'); });
+  await wait(600);
+  await shot('charselect');
+  const list = await ev(() => ({ rows: [...document.querySelectorAll('.evd-login .chars .crow:not(.empty)')].map(r => r.querySelector('.cn').textContent + ' ' + r.querySelector('.cz').textContent), sel: document.querySelector('.evd-login .chars .crow.sel .cn')?.textContent, createDisabled: document.querySelectorAll('.evd-login .chars .cbtns .evd-btn')[1].disabled }));
+  // a sixth? refused
+  await ev(() => __game.createCharacter({ name: 'Sixtha', race: 'human', sex: 'female', cls: 'mage' })); await wait(200);
+  const sixth = await ev(() => ({ mode: __game.mode, saved: !!JSON.parse(localStorage.getItem('everdawn.v1')).chars.Sixtha }));
+  // delete Tamsyn (confirm), then enter the world as Brakka
+  await ev(() => { const row = [...document.querySelectorAll('.evd-login .chars .crow')].find(r => r.textContent.includes('Tamsyn')); row.click(); document.querySelectorAll('.evd-login .chars .cbtns .evd-btn')[2].click(); });
+  await wait(300); await ev(() => [...document.querySelectorAll('.evd-popup button')].find(b => b.textContent === 'Delete')?.click()); await wait(300);
+  const afterDelete = await ev(() => ({ rows: document.querySelectorAll('.evd-login .chars .crow:not(.empty)').length, empty: document.querySelectorAll('.evd-login .chars .crow.empty').length, gone: !JSON.parse(localStorage.getItem('everdawn.v1')).chars.Tamsyn }));
+  await ev(() => { [...document.querySelectorAll('.evd-login .chars .crow')].find(r => r.textContent.includes('Brakka')).click(); document.querySelector('.evd-login .chars .cbtns .evd-btn.primary')?.click(); });
+  await wait(2500);
+  const entered = await ev(() => ({ mode: __game.mode, name: __game.game.player?.name, cls: __game.game.player?.cls, level: __game.game.player?.level, zone: __game.game.zoneId }));
+  if (list.rows.length !== 5 || !list.createDisabled || sixth.saved || afterDelete.rows !== 4 || !afterDelete.gone || entered.name !== 'Brakka') throw new Error(JSON.stringify({ list, sixth, afterDelete, entered }));
+  return { list, sixth, afterDelete, entered };
 });
 
 console.log(`\n${errs.length} error(s)`); for (const e of errs.slice(0, 12)) console.log(' ', e);

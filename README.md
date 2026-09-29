@@ -51,6 +51,7 @@ day, and so does the global race to kill it.
   legs, feet, two rings, two trinkets, main hand, off-hand and ranged. Staves are two-handed; casters can pair a one-hander
   with a tome or orb instead. Wands and bows fire with Shoot. Tailors in Dawnhollow and Aurelion sell shirts and tabards,
   and the tabard shows on your character. Click an equipped piece (or drag it to your bags) to take it off.
+- **Character select.** Up to five characters on the realm: pick one at Enter World, create another, or delete one.
 - **Loot rolls with friends.** Everyone in the raid gets Need / Greed / Pass windows, and nothing rolls until the whole
   group has chosen.
 - **Legendaries.** Beyond the dragon's epics, a sliver of a chance at one orange item per class, each with an effect of

@@ -234,7 +234,7 @@ if (process.argv.includes('--social')) {
     await wait(800);
     await H.evaluate(() => __game.ui.emit('login:enter'));
     await wait(600);
-    await clickPopup(H, 'Continue');
+    await H.evaluate(() => document.querySelector('.evd-login .chars .cbtns .evd-btn.primary')?.click());
     await wait(2500);
     return { out, back: await H.evaluate(() => ({ mode: __game.mode, name: __game.game.player?.name, sims: __game.game.sim.units.filter(u => u.kind === 'player').length })) };
   });

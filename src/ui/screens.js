@@ -2,6 +2,7 @@
 import { h, setText, setCls, setSrc, show, classColor, CLASS_NAMES, parseColor, fmtClock, fmtInt, rarityName, rarityColor, replay, rng } from './util.js';
 import { iconURL, elementColors } from './icons.js';
 import { glyphURL, roleURL, logoCrest } from './art.js';
+export const MAX_CHARS = 5;
 
 class Screen {
   constructor(ui, parent, cls) { this.ui = ui; this.el = h('div', 'evd-screen ' + cls, parent); show(this.el, false); this.isOpen = false; this._lazy = []; }
@@ -86,8 +87,41 @@ export class LoginScreen extends Screen {
     const ok = h('button', 'evd-btn', rbtns, 'Okay'); ok.addEventListener('click', () => { show(this.realms, false); show(this.realmDim, false); ui.emit('login:realm', 'Lastlight'); });
     h('div', 'rnote', this.realms, 'Lastlight is the only realm still online. Every other player is a SimPlayer. The leaderboard is real.');
     show(this.realms, false); show(this.realmDim, false);
+    // character select: up to MAX_CHARS characters, pick one and enter the world
+    this.charDim = h('div', 'rdim ptr', el); this.charDim.addEventListener('click', () => this.closeChars());
+    this.chars = h('div', 'chars evd-panel heavy', el);
+    h('div', 'evd-title', this.chars, 'Characters');
+    const chx = h('button', 'evd-close', this.chars); chx.addEventListener('click', () => this.closeChars());
+    this.charList = h('div', 'clist', this.chars);
+    const cbt = h('div', 'cbtns', this.chars);
+    this.charEnter = h('button', 'evd-btn primary', cbt, 'Enter World'); this.charEnter.addEventListener('click', () => this.charSel && ui.emit('chars:enter', this.charSel));
+    this.charNew = h('button', 'evd-btn', cbt, 'Create New Character'); this.charNew.addEventListener('click', () => { if (!this.charNew.disabled) ui.emit('chars:create'); });
+    this.charDel = h('button', 'evd-btn', cbt, 'Delete Character'); this.charDel.addEventListener('click', () => this.charSel && ui.emit('chars:delete', this.charSel));
+    this.charNew._tip = () => this.charNew.disabled ? { type: 'text', title: 'All character slots are full', lines: [`Delete a character to make room (${MAX_CHARS} at most).`] } : null;
+    addEventListener('keydown', e => { if (!this.charsOpen) return; if (e.key === 'Escape') this.closeChars(); else if (e.key === 'Enter' && this.charSel) ui.emit('chars:enter', this.charSel); });
+    show(this.chars, false); show(this.charDim, false);
     this.data = {};
   }
+  /** list: [{ name, level, race, cls, zone, jump? }], sel: the name to highlight */
+  openChars(list, sel) {
+    this.charList.textContent = '';
+    this.charSel = list.some(c => c.name === sel) ? sel : list[0]?.name || null;
+    for (const c of list) {
+      const r = h('div', 'crow ptr' + (c.name === this.charSel ? ' sel' : ''), this.charList);
+      h('img', '', r).src = iconURL('class' + c.cls[0].toUpperCase() + c.cls.slice(1), 64);
+      const mid = h('div', '', r);
+      const n = h('div', 'cn', mid, c.name); n.style.color = classColor(c.cls);
+      h('div', 'cl', mid, `Level ${c.level} ${c.race[0].toUpperCase() + c.race.slice(1)} ${CLASS_NAMES[c.cls] || c.cls}${c.jump ? ' · Premade' : ''}`);
+      h('div', 'cz', r, c.zone || '');
+      r.addEventListener('click', () => { this.charSel = c.name; for (const x of this.charList.children) x.classList.toggle('sel', x === r); });
+      r.addEventListener('dblclick', () => this.ui.emit('chars:enter', c.name));
+    }
+    for (let i = list.length; i < MAX_CHARS; i++) { const e = h('div', 'crow empty ptr', this.charList, 'Empty slot: create a character'); e.addEventListener('click', () => this.ui.emit('chars:create')); }
+    this.charNew.disabled = list.length >= MAX_CHARS;
+    this.charEnter.disabled = this.charDel.disabled = !list.length;
+    show(this.charDim, true); show(this.chars, true); this.charsOpen = true; replay(this.chars, 'in');
+  }
+  closeChars() { show(this.chars, false); show(this.charDim, false); this.charsOpen = false; }
   openRealms() { show(this.realmDim, true); show(this.realms, true); replay(this.realms, 'in'); }
   /**
    * d: { dragon?: { name, element, affix, affixDesc?, worldFirst?: { name, cls, time } | null, resetIn? }, leaderboard?: { worldFirst, fastestKill, topParse, speedrun },

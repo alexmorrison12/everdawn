@@ -100,7 +100,7 @@ await step('log out in the Crownlands; Continue brings you back there', async ()
   await wait(800);
   const title = await ev(() => ({ mode: __game.mode, zone: __game.zoneId }));
   await ev(() => __game.ui.emit('login:enter')); await wait(500);
-  await ev(() => [...document.querySelectorAll('.evd-popup button')].find(b => b.textContent === 'Continue')?.click());
+  await ev(() => document.querySelector('.evd-login .chars .cbtns .evd-btn.primary')?.click());
   await until(() => __game.mode === 'world' && __game.game.zoneId === 'crown' && !__game.traveling, 40000).catch(() => {});
   await wait(800);
   return { title, back: await ev(() => ({ mode: __game.mode, zone: __game.game.zoneId, at: [Math.round(__game.game.player.pos.x), Math.round(__game.game.player.pos.z)] })) };

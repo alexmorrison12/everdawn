@@ -23,6 +23,7 @@ import { Professions } from './game/professions.js';
 import { Companions } from './game/companions.js';
 import { MARKS_PER_KILL } from './game/game.js';
 import { ZONES } from './game/zones.js';
+import { MAX_CHARS } from './ui/screens.js';
 import { dailyDragon, AFFIXES } from './game/raid/daily.js';
 import { CinematicCam, TITLE_PATH, STAGE } from './game/cinematic.js';
 import { FX } from './fx/fx.js';
@@ -309,11 +310,17 @@ class App {
   wireScreens() {
     const ui = this.ui;
     const saved = () => { const db = store.load(); return db.last && db.chars[db.last]; };
-    ui.on('login:enter', () => {
-      const ch = saved();
-      if (ch) ui.popups.show({ id: 'title', text: `Continue as **${ch.name}**, level ${ch.level} ${ch.race} ${ch.cls}?`, accept: 'Continue', decline: 'New Character', onAccept: () => this.startWorld(ch), onDecline: () => this.showCreate(false) });
-      else this.showCreate(false);
+    // character select: every saved character (up to MAX_CHARS), oldest first like WoW's list
+    const roster = () => Object.values(store.load().chars || {}).sort((a, b) => (a.created || 0) - (b.created || 0))
+      .map(c => ({ name: c.name, level: c.level || 1, race: c.race, cls: c.cls, jump: !!c.jump, zone: ZONES[c.zone || 'vale']?.name }));
+    ui.on('login:enter', () => { const list = roster(); if (list.length) ui.login.openChars(list, store.load().last); else this.showCreate(false); });
+    ui.on('chars:enter', name => { const ch = store.load().chars[name]; if (!ch) return; ui.login.closeChars(); this.startWorld(ch); });
+    ui.on('chars:create', () => {
+      if (roster().length >= MAX_CHARS) { ui.alerts.error(`You already have ${MAX_CHARS} characters. Delete one to make room.`); return; }
+      ui.login.closeChars(); this.showCreate(false);
     });
+    ui.on('chars:delete', name => ui.popups.show({ id: 'delchar', text: `Delete **${name}** for good? Their gear, gold and progress go with them.`, accept: 'Delete', decline: 'Cancel',
+      onAccept: () => { const db = store.load(); delete db.chars[name]; if (db.last === name) db.last = null; store.save(db); const list = roster(); if (list.length) ui.login.openChars(list, db.last); else ui.login.closeChars(); } }));
     ui.on('login:raid', () => {
       const ch = saved();
       if (ch && ch.level >= 10) ui.popups.show({ id: 'title', text: `Raid tonight as **${ch.name}** (level 10 ${ch.cls})?`, accept: 'Raid', decline: 'New Character', onAccept: () => this.startWorld(ch, true), onDecline: () => this.showCreate(true) });
@@ -358,6 +365,9 @@ class App {
   clearPreview() { if (this.preview) { this.world.scene.remove(this.preview.root); this.preview.dispose?.(); this.preview = null; } }
 
   createCharacter(st) {
+    const db = store.load();
+    if (db.chars[st.name]) { this.ui.alerts.error(`You already have a character named ${st.name}.`); return; }
+    if (Object.keys(db.chars).length >= MAX_CHARS) { this.ui.alerts.error(`You already have ${MAX_CHARS} characters. Delete one to make room.`); return; }
     this.clearPreview();
     const ch = { name: st.name, race: st.race, sex: st.sex === 'female' ? 'f' : 'm', cls: st.cls, appearance: st.appearance || {}, level: 1, created: Date.now() };
     if (this.jumpMode) { ch.level = 10; ch.jump = true; ch.equip = this.game.premadeGear(st.cls); }
