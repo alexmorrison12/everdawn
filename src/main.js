@@ -525,7 +525,7 @@ class App {
     const result = { killTime: m.res.killTime, attempts: m.res.attempts, meter: m.res.meter, loot: [], player: { dps: row.dmg / t, hps: row.heal / t, dmg: row.dmg, heal: row.heal, died: !!row.dead, avoidable: row.avoidable || 0, role: p.raidRole } };
     this.raid.result = result; this.raid.state = 'victory';
     p.marks = (p.marks || 0) + MARKS_PER_KILL; bus.emit('marks', { amount: MARKS_PER_KILL }); bus.emit('chat', { ch: 'system', text: `You receive ${MARKS_PER_KILL} Ember Marks. Spend them with Quartermaster Brannoc in Dawnhollow.` });
-    setTimeout(() => this.onVictory(result), 9000);
+    this.afterRolls(() => this.onVictory(result));
   }
   guestResultsClose() {
     this.ui.screen(null); this.ui.setHUDVisible(true);
@@ -634,6 +634,12 @@ class App {
     this.net?.raidEnd(p.pos);
   }
 
+  /** The victory screen waits until you've chosen Need / Greed / Pass on every item (at least 9 s after the kill). */
+  afterRolls(fn, min = 9000) {
+    const t0 = performance.now();
+    const tick = () => { if (this.mode !== 'raid' || !this.raid) return; if (performance.now() - t0 >= min && !this.ui.rolls.pending()) fn(); else setTimeout(tick, 250); };
+    setTimeout(tick, min);
+  }
   /** You won `item` from the dragon (host or friend): the results screen's Loot Won fills in. */
   lootWon(item) { this.raidWon ||= []; if (item) this.raidWon.push(item); if (this.ui.results?.d) this.ui.results.setLoot(this.raidWon.map(it => uiItem(it)), this.rollsPending()); }
   rollsPending() { return this.guest ? (this.guest.rollsLeft || 0) > 0 : !!this.raid?.rolls?.some?.(r => !r.done); }
@@ -751,7 +757,7 @@ class App {
     st.update(dt);
     this.prof.update(dt); this.companions.update(dt);
     this.net?.update(dt);
-    if (this.mode === 'raid' && this.raid.state === 'victory' && !this.raidDone && this.raid.result && !this.raid.mirror) { this.raidDone = true; const res = this.raid.result; this.net?.raidVictory(res); setTimeout(() => this.watching ? this.endWatch(res) : this.onVictory(res), this.watching ? 14000 : 9000); }
+    if (this.mode === 'raid' && this.raid.state === 'victory' && !this.raidDone && this.raid.result && !this.raid.mirror) { this.raidDone = true; const res = this.raid.result; this.net?.raidVictory(res); if (this.watching) setTimeout(() => this.endWatch(res), 14000); else this.afterRolls(() => this.onVictory(res)); }
     const focus = p.pos.clone(); focus.y += (p.height || 1.8) * 0.92;
     G.uPlayerPos.value.copy(focus);
     if (this.debugView) { this.camera.position.set(...this.debugView.pos); this.camera.lookAt(...this.debugView.look); }

@@ -174,6 +174,8 @@ export class RollFrames {
     e.end = this.ui.now + hold; e.resolved = true;
   }
   remove(id) { const e = this.map.get(id); if (e) { e.el.remove(); this.map.delete(id); } }
+  /** Roll windows still waiting for your Need / Greed / Pass. */
+  pending() { let n = 0; for (const e of this.map.values()) if (!e.choice && !e.resolved) n++; return n; }
   tick(now) {
     for (const [id, e] of this.map) {
       if (now >= e.end) {

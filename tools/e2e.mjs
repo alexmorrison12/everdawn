@@ -53,7 +53,15 @@ await step('legendary drop: orange, requires level 10, rolled for, and it procs'
   cb.damage = dmg; cb.heal = heal;
   return { tipHasLevel10: /Requires Level 10/.test(tip || ''), tipHasChance: /Chance on hit|Equip: Your heals/.test(tip || ''), effect: it.proc.id, procsIn60: procs, playerProcs: p.procs?.map(x => x.id), dropped: it?.name, orange: rolls.find(x => x.name === it.name)?.color, others: rolls.length - 1 };
 });
-await step('results screen', async () => { const e = __game; await new Promise(r => setTimeout(r, 9800)); return { screen: e.mode, results: !!document.querySelector('[class*=results]') }; });
+await step('results screen waits until you have chosen on every roll, then shows', async () => {
+  const e = __game, shown = () => !!document.querySelector('.rloot')?.offsetParent;
+  await new Promise(r => setTimeout(r, 9800));
+  const early = shown();
+  for (const r of document.querySelectorAll('.evd-roll:not(.chosen)')) r.querySelector('.rbtn.pass')?.click();
+  await new Promise(r => setTimeout(r, 900));
+  if (early || !shown()) throw new Error(`victory screen ${early ? 'covered the loot rolls' : 'never came'}`);
+  return { heldForRolls: !early, shownAfter: shown(), screen: e.mode };
+});
 await shot('results');
 await step('share card', async () => { const e = __game; await e.shareCard(); const c = document.querySelector('canvas[width="1200"]'); return !!c; });
 await shot('share');

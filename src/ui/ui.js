@@ -84,7 +84,7 @@ export class UI {
     this.castBar = new CastBar(this, hud, 'pcast');
     this.actionBar = new ActionBar(this, hud);
     this.xpBar = this.actionBar.xp;
-    this.rolls = new RollFrames(this, hud);
+    this.rolls = new RollFrames(this, this.modalLayer); // above the victory screen: rolls stay clickable
     this.fps = h('div', 'evd-fps', hud); show(this.fps, false);
     // centre messages
     this.alerts = new Alerts(this, this.centerLayer);
