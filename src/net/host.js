@@ -125,6 +125,7 @@ export class HostSession {
       }
       case 'wp': if (p) bus.emit('waypoint', m.clear ? { unit: p, clear: true, $from: gst.id } : { unit: p, x: +m.x || 0, z: +m.z || 0, ping: !!m.ping, $from: gst.id }); return;
       case 'roll': if (p) this.lootRaid?.chooseRoll(m.i | 0, p, m.c); return; // their Need / Greed / Pass
+      case 'rest': if (p && !p.dead && !p.inCombat && Object.values(this.g.npcs).some(n => n.npc?.inn && n.pos.distanceTo(p.pos) < 12)) { p.hp = p.hpMax; p.power = p.powerMax; } return; // an innkeeper looked after them
       case 'inspect': { const u = this.unit(m.id); if (u && this.app.interact) this.send(gst, { t: 'inspect', data: this.app.interact.inspectData(u) }); return; }
       case 'trade': {
         if (!p) return;

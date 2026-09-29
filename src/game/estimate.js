@@ -11,11 +11,15 @@ import { bus } from './events.js';
 const T = 90, DT = 0.1;
 const MELEE = new Set(['warrior', 'rogue', 'paladin']);
 const cache = new Map();
+// items are told apart by the object itself: uids repeat (saved items keep old ones; vendor stock and friends' loot
+// number their own), and a repeat made one piece show another's DPS
+const ids = new WeakMap(); let nextId = 1;
+const idOf = it => { if (!it) return ''; let n = ids.get(it); if (!n) ids.set(it, n = nextId++); return n; };
 
 /** { dps, hps? } for player `p` wearing its gear, with `swap` ({ slot: item }) changes. */
 export function estimate(game, p, swap = null) {
   const equip = { ...p.equip, ...(swap || {}) };
-  const key = `${p.cls}|${p.level}|${Object.entries(equip).map(([s, it]) => `${s}:${it?.uid ?? ''}`).join(',')}`;
+  const key = `${p.cls}|${p.level}|${Object.entries(equip).map(([s, it]) => `${s}:${idOf(it)}`).join(',')}`;
   if (cache.has(key)) return cache.get(key);
   const out = { dps: run(game, p, equip, 'dps') };
   if (p.cls === 'priest') out.hps = run(game, p, equip, 'hps');

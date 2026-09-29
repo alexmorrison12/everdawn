@@ -260,6 +260,30 @@ await step('character sheet shows estimated DPS; tooltips show what an item woul
   });
 });
 
+await step('an innkeeper restores your health and mana', () => ev(async () => {
+  const A = __game, g = A.game, p = g.player, m = g.npcs.maribel;
+  A.tp(m.pos.x + 1.5, m.pos.z + 2); p.inCombat = false; p.hp = 5; p.power = 3; await new Promise(r => setTimeout(r, 200));
+  g.interact(m); await new Promise(r => setTimeout(r, 200)); A.ui.questDialog.close();
+  if (p.hp !== p.hpMax || p.power !== p.powerMax) throw new Error(`not restored: ${p.hp}/${p.hpMax} ${p.power}/${p.powerMax}`);
+  return { hp: `${p.hp}/${p.hpMax}`, mana: `${p.power}/${p.powerMax}` };
+}));
+
+await step('a white helmet never borrows a blue one\'s DPS (two items with the same id)', async () => {
+  const r = await ev(async () => {
+    const A = __game, g = A.game, p = g.player, sleep = ms => new Promise(r => setTimeout(r, ms));
+    const white = g.stock('smith').find(e => e.gear.slot === 'head').gear, blue = { ...white, name: 'Test Blue Hood', rarity: 'rare', stats: { int: 30, sp: 40 }, uid: white.uid };
+    p.bags.push({ gear: blue, count: 1 }, { gear: white, count: 1 }); A.hud.bagsDirty = true; await sleep(300);
+    const cell = it => A.ui.bags.cells.find(c => c._item?.name === it.name && c._item.rarity === it.rarity)._item;
+    const blueTip = A.ui.itemExtra(cell(blue))?.[0]?.text, whiteTip = A.ui.itemExtra(cell(white))?.[0]?.text;
+    const dps = () => +([...document.querySelectorAll('.evd-win-character .sr')].map(x => x.textContent).find(t => /^DPS/.test(t)) || '').replace(/[^\d.]/g, '');
+    g.equip(blue); A.hud.charDirty = true; await sleep(300); const withBlue = dps();
+    g.equip(white); A.hud.charDirty = true; await sleep(300); const withWhite = dps();
+    return { blueTip, whiteTip, withBlue, withWhite };
+  });
+  if (!(r.withBlue > r.withWhite)) throw new Error('the blue helmet should out-DPS the white one: ' + JSON.stringify(r));
+  return r;
+});
+
 await step('quest items you no longer need disappear', () => ev(() => {
   const g = __game.game; g.addItem('candle', 5); g.addItem('spiderSilk', 3); g.checkQuestObjectives();
   return { candles: g.countItem('candle'), silk: g.countItem('spiderSilk') };

@@ -93,7 +93,7 @@ const SUFFIX = [
 const RMULT = { poor: 0.4, common: 0.7, uncommon: 1.0, rare: 1.35, epic: 1.8, legendary: 2.4 };
 const TIER = { poor: 0, common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 3 };
 
-let GID = 1;
+let GID = Date.now() * 100 + Math.floor(Math.random() * 100); // unique across sessions and players (friends trade and win each other's items)
 export const nextUid = () => GID++;
 /** Generate a gear piece for class `cls` at item level `ilvl` (`slot`: an item type; random if left out). */
 export function makeGear(rng, cls, ilvl, rarity, slot = null) {

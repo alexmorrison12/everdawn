@@ -332,6 +332,16 @@ if (process.argv.includes('--social')) {
   });
   await shot(Gp, 'guest_loot'); await shot(H, 'host_loot');
 } else if (!RAID) {
+  await step('the friend talks to an innkeeper: health and mana back to full (on the host too)', async () => {
+    await H.evaluate(() => { const pr = __game.net.proxies()[0]; pr.hp = 20; pr.power = 5; pr.inCombat = false; });
+    await Gp.evaluate(async () => { const A = __game, g = A.game, p = g.player, m = [...A.guest.units.values()].find(u => u.npcId === 'maribel') || g.npcs.maribel; p.pos.set(m.pos.x + 1.5, p.pos.y, m.pos.z + 2); await new Promise(r => setTimeout(r, 600)); p.inCombat = false; p.hp = 20; p.power = 5; g.interact(m); A.ui.questDialog.close(); });
+    await wait(1500);
+    const host = await H.evaluate(() => { const pr = __game.net.proxies()[0]; return { hp: `${pr.hp}/${pr.hpMax}`, mana: `${pr.power}/${pr.powerMax}` }; });
+    const guest = await Gp.evaluate(() => { const p = __game.game.player; return { hp: `${p.hp}/${p.hpMax}`, mana: `${p.power}/${p.powerMax}` }; });
+    const full = x => x.split('/')[0] === x.split('/')[1];
+    if (!full(host.hp) || !full(host.mana) || !full(guest.hp)) throw new Error('not restored: ' + JSON.stringify({ host, guest }));
+    return { host, guest };
+  });
   // bring a wolf to both players and let the guest kill it with fireballs
   // out past the village guards, so the kill is ours
   await H.evaluate(() => { const A = __game; A.tp(70, 125); });

@@ -612,7 +612,17 @@ export class GameState {
       else if (q.turnin === id && st === 'active') offers.push({ q, kind: 'progress' });
     }
     this.player.facing = Math.atan2(-(o.pos.x - this.player.pos.x), -(o.pos.z - this.player.pos.z));
+    if (o.npc?.inn) this.innRest(o);
     bus.emit('gossip', { npc: o, def: o.npc, offers });
+  }
+  /** An innkeeper looks after you: health and mana (or rage) back to full, out of combat. */
+  innRest(npc) {
+    const u = this.player;
+    if (u.dead || u.ghost || u.inCombat || (u.hp >= u.hpMax && u.power >= u.powerMax)) return;
+    u.hp = u.hpMax; u.power = u.powerMax;
+    if (this.mirror) this.e.guest?.net.send({ t: 'rest' }); // a friend's health lives on the host
+    bus.emit('fx', { name: 'heal', pos: u.pos.clone(), color: 0xffd890 }); bus.emit('sound', { name: 'heal', pos: u.pos });
+    bus.emit('chat', { ch: 'system', text: `${npc.name} sees that you're well rested. Health and ${u.powerType === 'rage' ? 'rage' : u.powerType === 'energy' ? 'energy' : 'mana'} restored.` });
   }
 
   // ------------------------------------------------------------ loot & death
