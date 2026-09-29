@@ -25,6 +25,7 @@ export function iconCanvas(id, size = 64, opts = {}) {
   const [c, x] = canvas(M);
   K = M / 100;
   const R = rng(hashStr(id) ^ 0x9e37);
+  if (id.includes('@')) { const [base, c1, c2, em] = id.split('@'); opts = { ...opts, tint: '#' + c1, trim: c2 && '#' + c2, emblem: em }; id = base; } // shirts and tabards carry their colours
   const fn = PAINT[id] || PAINT.unknown;
   x.save();
   fn(x, R, opts);
@@ -1259,6 +1260,111 @@ const PAINT = {
     x.strokeStyle = 'rgba(60,30,0,.6)'; x.lineWidth = 1.4; circle(x, 50, 62, 17); x.stroke();
     for (let i = 0; i < 12; i++) { const a = i / 12 * TAU; x.fillStyle = 'rgba(80,40,0,.6)'; poly(x, [[50 + Math.cos(a) * 17, 62 + Math.sin(a) * 17], [50 + Math.cos(a + 0.13) * 21, 62 + Math.sin(a + 0.13) * 21], [50 + Math.cos(a - 0.13) * 21, 62 + Math.sin(a - 0.13) * 21]]); x.fill(); }
     gemShape(x, 50, 62, 10, o.tint || (o.rarity ? rarityColor(o.rarity) : '#20c0a0'), { n: 6 });
+  },
+
+  amulet(x, R, o) {
+    itemBG(x, R, o, ['#4a4058', '#1a1622', '#050407']); rarityGlow(x, o);
+    // chain: a V from the top corners down to the pendant
+    x.strokeStyle = metalLG(x, 10, 0, 90, 40, 'gold'); x.lineWidth = 1.7;
+    for (const s of [-1, 1]) for (let i = 0; i < 12; i++) { const t = i / 11, px = 50 + s * (36 - t * 30) , py = 8 + t * 42 - Math.sin(t * Math.PI) * 6; ellipse(x, px, py, 2.1, 1.3, (s > 0 ? -0.9 : 0.9) + Math.PI / 2 * (i % 2)); x.stroke(); }
+    // setting + teardrop gem
+    x.fillStyle = metalLG(x, 38, 50, 62, 92, 'gold');
+    x.beginPath(); x.moveTo(50, 50); x.bezierCurveTo(66, 60, 68, 80, 50, 92); x.bezierCurveTo(32, 80, 34, 60, 50, 50); x.closePath(); x.fill(); outline(x, 'rgba(0,0,0,.9)', 1.2);
+    const col = o.rarity ? rarityColor(o.rarity) : '#3ab0ff';
+    glow(x, 50, 74, 22, col, 0.55);
+    x.fillStyle = rg(x, 46, 68, 0.5, 14, [[0, '#ffffff'], [0.3, shade(col, 0.4)], [0.75, col], [1, shade(col, -0.6)]]);
+    x.beginPath(); x.moveTo(50, 57); x.bezierCurveTo(61, 65, 62, 79, 50, 87); x.bezierCurveTo(38, 79, 39, 65, 50, 57); x.closePath(); x.fill(); outline(x, 'rgba(0,0,0,.7)', 0.8);
+    x.fillStyle = metalLG(x, 44, 46, 56, 54, 'gold'); circle(x, 50, 50, 4.2); x.fill(); outline(x, 'rgba(0,0,0,.85)', 0.9);
+    sparkle(x, 44, 66, 5, '#ffffff');
+  },
+  bracers(x, R, o) {
+    itemBG(x, R, o); rarityGlow(x, o);
+    const m = o.tint ? tintMetal('steel', o.tint, 0.4) : METAL.steel, col = '#6a3a1a';
+    for (const [cx, cy, sc] of [[36, 40, 0.86], [60, 58, 1]]) {
+      x.save(); x.translate(cx, cy); x.rotate(-0.5); x.scale(sc, sc);
+      // leather sleeve (a short cone) with a steel plate over it
+      x.beginPath(); x.moveTo(-15, -22); x.lineTo(15, -22); x.lineTo(18, 22); x.lineTo(-18, 22); x.closePath();
+      x.fillStyle = lg(x, -18, 0, 18, 0, [[0, shade(col, -0.6)], [0.45, shade(col, 0.35)], [1, shade(col, -0.7)]]); x.fill(); outline(x, 'rgba(0,0,0,.9)', 1.1);
+      x.beginPath(); x.moveTo(-10, -20); x.lineTo(10, -20); x.lineTo(12, 20); x.lineTo(-12, 20); x.closePath();
+      x.fillStyle = lg(x, -12, 0, 12, 0, [[0, m[3]], [0.35, m[0]], [0.6, m[1]], [1, m[4]]]); x.fill(); outline(x, 'rgba(0,0,0,.85)', 0.9);
+      x.strokeStyle = metalLG(x, -18, 0, 18, 0, 'gold'); x.lineWidth = 2.2;
+      for (const yy of [-19, 19]) { x.beginPath(); x.moveTo(-16 - (yy > 0 ? 2 : 0), yy); x.lineTo(16 + (yy > 0 ? 2 : 0), yy); x.stroke(); }
+      for (const yy of [-8, 8]) { x.fillStyle = rg(x, -0.5, yy - 0.5, 0, 2.4, [[0, '#fff8d0'], [1, '#6a4a10']]); circle(x, 0, yy, 1.9); x.fill(); }
+      x.restore();
+    }
+  },
+  wand(x, R, o) {
+    itemBG(x, R, o, ['#3a3050', '#141020', '#040308']);
+    const tip = o.tint || (o.rarity ? rarityColor(o.rarity) : '#b060ff');
+    x.save(); x.translate(26, 80); x.rotate(0.78);
+    haft(x, 0, 0, 0, -62, 5.2, ['#2a1406', '#b07a40', '#140802']);
+    for (const yy of [-10, -40]) { x.fillStyle = metalLG(x, -4, 0, 4, 0, 'gold'); x.fillRect(-3.8, yy, 7.6, 3.2); }
+    wrap(x, 0, -2, 0, -14, 6, '#4a2a50');
+    x.translate(0, -66);
+    glow(x, 0, 0, 20, tip, 0.9);
+    x.fillStyle = metalLG(x, -5, 0, 5, 0, 'gold'); poly(x, [[-5, 6], [0, -2], [5, 6], [3, 9], [-3, 9]]); x.fill(); outline(x, 'rgba(0,0,0,.85)', 0.8);
+    gemShape(x, 0, -4, 6.5, tip, { n: 6, glow: false });
+    x.restore();
+    sparkle(x, 78, 20, 7, '#ffffff'); sparkle(x, 66, 12, 3.5, tip);
+  },
+  tome(x, R, o) {
+    itemBG(x, R, o); rarityGlow(x, o);
+    const col = o.tint || '#5a1e2a';
+    x.save(); x.translate(50, 52); x.rotate(-0.18);
+    // pages (the fore-edge), then the cover
+    x.fillStyle = lg(x, 0, -30, 0, 34, [[0, '#f4ead0'], [1, '#b8a47a']]); x.beginPath(); x.roundRect(-24, -30, 50, 64, 3); x.fill(); outline(x, 'rgba(0,0,0,.7)', 0.8);
+    x.strokeStyle = 'rgba(90,70,40,.5)'; x.lineWidth = 0.5; for (let i = 0; i < 9; i++) { x.beginPath(); x.moveTo(22 + i * 0.35, -28); x.lineTo(22 + i * 0.35, 32); x.stroke(); }
+    x.beginPath(); x.roundRect(-28, -34, 48, 66, 4);
+    x.fillStyle = rg(x, -10, -14, 2, 50, [[0, shade(col, 0.5)], [0.5, col], [1, shade(col, -0.7)]]); x.fill(); outline(x, 'rgba(0,0,0,.9)', 1.3);
+    // spine band + gold corners + a rune
+    x.fillStyle = lg(x, -28, 0, -20, 0, [[0, shade(col, -0.6)], [1, shade(col, -0.2)]]); x.fillRect(-28, -34, 7, 66);
+    x.fillStyle = metalLG(x, -30, -36, 22, 34, 'gold');
+    for (const [cx, cy, sx, sy] of [[20, -34, -1, 1], [20, 32, -1, -1], [-21, -34, 1, 1], [-21, 32, 1, -1]]) poly(x, [[cx, cy], [cx + sx * 10, cy], [cx, cy + sy * 10]]), x.fill();
+    x.lineWidth = 2; x.strokeStyle = metalLG(x, -12, -14, 12, 16, 'gold'); circle(x, 0, -1, 12); x.stroke();
+    const rune = o.rarity ? rarityColor(o.rarity) : '#ffd060'; glow(x, 0, -1, 16, rune, 0.5);
+    x.strokeStyle = rune; x.lineWidth = 1.8; x.beginPath(); x.moveTo(0, -10); x.lineTo(0, 8); x.moveTo(-6, -4); x.lineTo(6, 2); x.moveTo(6, -4); x.lineTo(-6, 2); x.stroke();
+    x.restore();
+  },
+  orb(x, R, o) {
+    itemBG(x, R, o, ['#2a3a5a', '#0e1424', '#030408']);
+    const col = o.tint || (o.rarity ? rarityColor(o.rarity) : '#50b0ff');
+    // a claw stand
+    for (const s of [-1, 0, 1]) { ribbon(x, bez([50 + s * 6, 90], [50 + s * 20, 80], [50 + s * 26, 62], [50 + s * 18, 52]), t => 3.4 * (1 - t) + 0.8, 16); x.fillStyle = metalLG(x, 30, 50, 70, 90, 'gold'); x.fill(); outline(x, 'rgba(0,0,0,.85)', 0.8); }
+    x.fillStyle = metalLG(x, 36, 86, 64, 94, 'gold'); x.beginPath(); x.ellipse(50, 90, 14, 4, 0, 0, TAU); x.fill(); outline(x, 'rgba(0,0,0,.85)', 0.9);
+    glow(x, 50, 44, 40, col, 0.9);
+    x.fillStyle = rg(x, 42, 34, 1, 28, [[0, '#ffffff'], [0.25, shade(col, 0.45)], [0.7, col], [1, shade(col, -0.7)]]); circle(x, 50, 44, 24); x.fill(); outline(x, 'rgba(0,0,0,.6)', 1);
+    x.strokeStyle = rgba('#ffffff', 0.45); x.lineWidth = 1.2; for (let i = 0; i < 3; i++) { x.beginPath(); x.ellipse(50, 44, 20 - i * 5, 7 + i * 3, 0.6 + i * 0.9, 0, TAU); x.stroke(); }
+    x.fillStyle = 'rgba(255,255,255,.55)'; x.beginPath(); x.ellipse(41, 34, 7, 4, -0.6, 0, TAU); x.fill();
+  },
+  shirt(x, R, o) {
+    itemBG(x, R, o);
+    const col = o.tint || '#e8e0cc';
+    x.beginPath();
+    x.moveTo(36, 14); x.quadraticCurveTo(50, 22, 64, 14); x.lineTo(86, 26); x.lineTo(92, 46); x.lineTo(76, 50); x.lineTo(72, 40);
+    x.lineTo(74, 88); x.quadraticCurveTo(50, 92, 26, 88); x.lineTo(28, 40); x.lineTo(24, 50); x.lineTo(8, 46); x.lineTo(14, 26); x.closePath();
+    x.fillStyle = rg(x, 44, 36, 2, 64, [[0, shade(col, 0.4)], [0.5, col], [1, shade(col, -0.65)]]); x.fill(); outline(x, 'rgba(0,0,0,.9)', 1.3);
+    x.strokeStyle = rgba(shade(col, -0.6), 0.6); x.lineWidth = 1.2; for (const fx of [38, 50, 62]) { x.beginPath(); x.moveTo(fx, 50); x.quadraticCurveTo(fx - 2, 70, fx, 88); x.stroke(); }
+    // collar slit and laces
+    x.strokeStyle = rgba(shade(col, -0.75), 0.9); x.lineWidth = 1.6; x.beginPath(); x.moveTo(50, 19); x.lineTo(50, 38); x.stroke();
+    x.strokeStyle = '#6a4a2a'; x.lineWidth = 1; for (let i = 0; i < 3; i++) { x.beginPath(); x.moveTo(46, 23 + i * 5); x.lineTo(54, 26 + i * 5); x.moveTo(54, 23 + i * 5); x.lineTo(46, 26 + i * 5); x.stroke(); }
+    x.strokeStyle = rgba(shade(col, 0.6), 0.6); x.lineWidth = 1.4; x.beginPath(); x.moveTo(37, 15.5); x.quadraticCurveTo(50, 23.5, 63, 15.5); x.stroke();
+  },
+  tabard(x, R, o) {
+    itemBG(x, R, o); rarityGlow(x, o);
+    const col = o.tint || '#2a4a8a', trim = o.trim || '#e8c050', kind = o.emblem || 'lion';
+    const body = () => { x.beginPath(); x.moveTo(30, 12); x.lineTo(40, 10); x.quadraticCurveTo(50, 18, 60, 10); x.lineTo(70, 12); x.lineTo(72, 80); x.lineTo(50, 92); x.lineTo(28, 80); x.closePath(); };
+    body(); x.fillStyle = rg(x, 44, 34, 2, 62, [[0, shade(col, 0.45)], [0.5, col], [1, shade(col, -0.7)]]); x.fill();
+    x.lineWidth = 4; x.strokeStyle = lg(x, 28, 0, 72, 0, [[0, shade(trim, -0.4)], [0.5, shade(trim, 0.3)], [1, shade(trim, -0.4)]]); x.stroke(); outline(x, 'rgba(0,0,0,.9)', 1.1);
+    // emblem
+    x.save(); x.translate(50, 48); x.fillStyle = lg(x, -12, -14, 12, 14, [[0, shade(trim, 0.5)], [0.5, trim], [1, shade(trim, -0.5)]]);
+    if (kind === 'sun' || kind === 'star') { const n = kind === 'sun' ? 12 : 5, inr = kind === 'sun' ? 0.62 : 0.42; x.beginPath(); for (let i = 0; i <= n * 2; i++) { const a = i / (n * 2) * TAU - Math.PI / 2, r = i % 2 ? 14 * inr : 14; x.lineTo(Math.cos(a) * r, Math.sin(a) * r); } x.closePath(); }
+    else if (kind === 'cross') { const w = 4; poly(x, [[-w, -14], [w, -14], [w, -w], [14, -w], [14, w], [w, w], [w, 16], [-w, 16], [-w, w], [-14, w], [-14, -w], [-w, -w]]); }
+    else if (kind === 'skull') { x.beginPath(); x.arc(0, -2, 11, 0, TAU); }
+    else { x.beginPath(); x.moveTo(-11, -13); x.lineTo(11, -13); x.lineTo(11, 2); x.quadraticCurveTo(9, 12, 0, 17); x.quadraticCurveTo(-9, 12, -11, 2); x.closePath(); } // lion: a heater shield
+    x.fill(); outline(x, 'rgba(0,0,0,.8)', 0.9);
+    if (kind === 'lion') { x.fillStyle = shade(col, -0.3); x.beginPath(); x.arc(0, -3, 4.5, 0, TAU); x.fill(); poly(x, [[-3, 0], [3, 0], [5, 10], [-5, 10]]); x.fill(); }
+    x.restore();
+    body(); x.save(); x.clip(); x.fillStyle = 'rgba(255,255,255,.12)'; x.fillRect(30, 10, 10, 80); x.restore();
   },
 
   // ===================================================== LOOT / QUEST ITEMS

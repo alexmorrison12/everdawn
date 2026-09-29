@@ -31,6 +31,7 @@ export function humanoidOpts(o = {}) {
   if (sex === 'f') out.beard = 0;
   out.cls = o.outfit ? 'npc' : (o.cls || 'warrior');
   out.gear = o.outfit ? (OUTFIT[o.outfit] || 'npc:villager') : `${out.cls === 'npc' ? 'warrior' : out.cls}:${o.gearTier ?? 1}`;
+  if (o.gear && !o.outfit) out.gear = o.gear; // a worked-out look (a tabard, an off-hand: game/game.js lookSpec)
   if (o.outfit === 'banditBoss') out.scale = 1.08;
   return out;
 }

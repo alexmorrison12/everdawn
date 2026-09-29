@@ -115,6 +115,7 @@
 .evd-win-character .doll { display: flex; gap: 10px; }
 .evd-win-character .col { display: flex; flex-direction: column; gap: 6px; }
 .evd-win-character .evd-slot { width: 42px; height: 42px; }
+.evd-win-character .evd-slot.dim .ic { opacity: .35; filter: grayscale(.6); } /* a two-hander, seen from the off-hand */
 .evd-win-character .mid {
   position: relative; flex: 1; border-radius: 6px; overflow: hidden;
   background: radial-gradient(ellipse at 50% 70%, rgba(110,80,40,.35), rgba(0,0,0,.55) 72%);

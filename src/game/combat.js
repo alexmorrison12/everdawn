@@ -48,6 +48,7 @@ export class Combat {
     if (!sp.offGcd && caster.gcd > 0) return { ok: false, err: 'Spell is not ready yet', silent: true };
     const cost = lit && freeWhenLit(id) ? 0 : this.spellCost(caster, sp);
     if (sp.requiresAura && !caster.hasAura(sp.requiresAura)) return { ok: false, err: 'You must have killed an enemy recently' };
+    if (sp.ranged && !caster.equip?.ranged) return { ok: false, err: sp.ranged === 'wand' ? 'Requires a wand' : 'Requires a bow or crossbow' };
     if (sp.powerType && caster.powerType === sp.powerType && caster.power < cost) return { ok: false, err: sp.powerType === 'rage' ? 'Not enough rage' : sp.powerType === 'energy' ? 'Not enough energy' : 'Not enough mana' };
     if (sp.target === 'enemy') {
       if (!target || target.dead) return { ok: false, err: 'You have no target' };
@@ -111,7 +112,7 @@ export class Combat {
   execute(caster, id, target, point, { free = false } = {}) {
     const sp = SPELLS[id];
     if (!sp.channel && !free) this.pay(caster, sp);
-    if (sp.cd) caster.cooldowns.set(id, sp.cd);
+    if (sp.cd) caster.cooldowns.set(id, (sp.weaponCd && caster.equip?.ranged?.speed) || sp.cd); // Shoot: as fast as the weapon
     if (sp.target === 'enemy' && target) { this.engage(caster, target); }
     // special movement
     if (sp.charge && target) bus.emit('charge', { unit: caster, target });
@@ -142,6 +143,7 @@ export class Combat {
       heal: (t, amt, o = {}) => self.heal(caster, t, amt, { ...o, spell: sp, spellId: id }),
       aura: (t, aid, o = {}) => self.applyAura(caster, t, aid, o),
       weapon: (mult = 1) => self.weaponRoll(caster) * mult,
+      ranged: () => { const r = caster.equip?.ranged; return r ? r.dmgMin + (r.dmgMax - r.dmgMin) * self.rng.next() : 0; },
       enemiesNear: (c, r) => sim.query(c, r).filter(u => caster.isEnemy(u) && !u.dead),
       alliesNear: (c, r) => sim.query(c, r).filter(u => !u.dead && u.hostile === caster.hostile && u !== caster.duelWith && (u.kind === 'player' || u.kind === 'sim' || u.kind === 'remote' || u.kind === 'npc' && u.guard)),
     };

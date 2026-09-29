@@ -12,8 +12,10 @@ import { enc, unitSpawn } from './codec.js';
 import { lobbyStyles } from './lobby.js';
 import { Party } from '../game/party.js';
 import { MOUNT_BY_CODE } from '../game/companions.js';
-import { firework } from '../game/game.js';
+import { firework, lookSpec, setLook } from '../game/game.js';
 import { addFriendKills, knownKills } from '../meta/meta.js';
+
+const plainItem = it => { const { _ui, ...o } = it; return o; }; // an item as data (without the host's cached tooltip)
 
 const RANGE = 150;                 // how far around a guest units are streamed
 const SNAP_EVERY = 1 / 12;         // seconds between state snapshots
@@ -21,7 +23,7 @@ const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 
 // events every nearby guest sees; events only the guest they concern sees; raid-wide events while in the raid
 const WORLD = new Set(['damage', 'heal', 'miss', 'swing', 'spell_go', 'spell_hit', 'cast_start', 'cast_stop', 'death', 'aura_apply', 'aura_remove',
-  'fx', 'fx_projectile', 'fx_cone', 'fx_ground', 'fx_ground_stop', 'sound', 'say', 'bubble', 'emote', 'evade', 'anim']);
+  'fx', 'fx_projectile', 'fx_cone', 'fx_ground', 'fx_ground_stop', 'sound', 'say', 'bubble', 'emote', 'evade', 'anim', 'look']);
 const OWNER = new Set(['charge', 'blink', 'proc', 'error', 'duel_state']);
 const PARTY = new Set(['waypoint']);        // events only the unit's group sees
 const RAIDWIDE = new Set(['raid_warning', 'boss_timer', 'boss_phase', 'raid_state', 'zone_text', 'music', 'fade', 'shake', 'raid_roster']);
@@ -122,6 +124,7 @@ export class HostSession {
         return;
       }
       case 'wp': if (p) bus.emit('waypoint', m.clear ? { unit: p, clear: true, $from: gst.id } : { unit: p, x: +m.x || 0, z: +m.z || 0, ping: !!m.ping, $from: gst.id }); return;
+      case 'roll': if (p) this.lootRaid?.chooseRoll(m.i | 0, p, m.c); return; // their Need / Greed / Pass
       case 'inspect': { const u = this.unit(m.id); if (u && this.app.interact) this.send(gst, { t: 'inspect', data: this.app.interact.inspectData(u) }); return; }
       case 'trade': {
         if (!p) return;
@@ -167,7 +170,8 @@ export class HostSession {
     const u = new Unit({ name: ch.name, kind: 'remote', hostile: false, level: ch.level || 1, cls: ch.cls, race: ch.race, sex: ch.sex, pos: new THREE.Vector3(x, g.world.heightAt(x, z), z) });
     u.remote = gst.id; u.appearance = ch.appearance || {}; u.equip = ch.equip || {};
     g.levelStats(u); u.hp = u.hpMax; u.power = u.powerType === 'rage' ? 0 : u.powerMax;
-    g.addModel(u, ['humanoid', { race: u.race, sex: u.sex, cls: u.cls, ...u.appearance, gearTier: ch.look || 0, seed: u.appearance.seed ?? 7 }]);
+    u.gearLook = ch.look || 0; u.lookKey = JSON.stringify(lookSpec(u.cls, u.gearLook, u.equip));
+    g.addModel(u, ['humanoid', { race: u.race, sex: u.sex, cls: u.cls, ...u.appearance, gearTier: u.gearLook, gear: JSON.parse(u.lookKey), seed: u.appearance.seed ?? 7 }]);
     g.sim.add(u);
     gst.proxy = u; gst.known.clear(); this.byProxy.set(u, gst);
     // back from a refresh: rejoin the group they dropped out of. Arriving for the first time: group up with the host
@@ -188,6 +192,8 @@ export class HostSession {
     bus.emit('sound', { name: 'questComplete' });
     this.send(gst, { t: 'welcome', you: u.id, host: host?.id, hostName: host?.name, tod: this.app.world.tod, zone: this.app.zoneId, pos: [r1(x), r1(z)], raid: this.raiding ? this.raidInfo() : null });
     this.send(gst, { t: 'kills', l: knownKills(this.app.dragon.day) }); // today's boards include each other
+    for (const x of (this.pendingLoot || []).filter(x => x.name === u.name)) this.send(gst, { t: 'loot_won', item: x.item }); // won while they were away
+    this.pendingLoot = (this.pendingLoot || []).filter(x => x.name !== u.name);
     this.badge.render();
   }
   removeProxy(gst) {
@@ -241,7 +247,8 @@ export class HostSession {
     if (m.level) p.level = m.level;
     if (m.equip) p.equip = m.equip;
     this.g.levelStats(p);
-    if (m.look !== undefined && m.look !== p.gearLook) { p.gearLook = m.look; p.model?.setGear?.(`${p.cls}:${m.look}`); }
+    const tier = m.look ?? p.gearLook ?? 0, spec = lookSpec(p.cls, tier, p.equip), key = JSON.stringify(spec);
+    if (key !== p.lookKey) { p.gearLook = tier; p.lookKey = key; setLook(p, spec); bus.emit('look', { unit: p, spec: key }); } // everyone else sees their new tabard
   }
   chat(gst, m) {
     const p = gst.proxy; if (!p || !m.text) return;
@@ -338,7 +345,7 @@ export class HostSession {
   }
   // roster, roles, meter and phase for a guest's raid frames and damage meter (twice a second)
   raidState(gst) {
-    const r = this.app.raid, now = r.totalT;
+    const r = this.app.raid, now = performance.now() / 1000; // wall clock: each new raid's own clock starts again at 0
     if (gst.rsT !== undefined && now - gst.rsT < 0.5) return null;
     gst.rsT = now;
     const rs = { st: r.state, att: r.attempt, ph: r.boss.brain?.phase || 0, dur: r.fightStart !== undefined && (r.state === 'combat' || r.state === 'victory') ? r1((r.result ? r.result.killTime : now - r.fightStart)) : 0, bo: r.boss.id, le: r.leader?.id || 0,
@@ -390,6 +397,7 @@ export class HostSession {
     const r = this.app.raid; this.resultSent = false; this.raidLive = true;
     this.resetKnown();
     for (const gst of this.guests.values()) {
+      gst.roSig = null; gst.rsT = undefined; // a new raid: send the new roster (a requeue keeps the old one otherwise)
       if (!gst.proxy) continue;
       if (!r.raiders.includes(gst.proxy)) { this.send(gst, { t: 'e', l: [['chat', { ch: 'system', text: `${this.me.name} is raiding without you (the raid formed before you arrived).` }]] }); continue; }
       this.send(gst, { t: 'raid', dragon: { ...r.dragon }, attempt: r.attempt });
@@ -405,7 +413,18 @@ export class HostSession {
     const res = { killTime: result.killTime, attempts: result.attempts, meter: result.meter.map(m => ({ name: m.name, cls: m.cls, dmg: m.dmg, heal: m.heal, dead: m.dead, avoidable: m.avoidable })) };
     for (const gst of this.guests.values()) if (gst.proxy && this.app.raid?.raiders.includes(gst.proxy)) this.send(gst, { t: 'raid_result', res });
   }
-  giveLoot(u, item) { const gst = this.byProxy.get(u); if (gst) this.send(gst, { t: 'loot_won', item }); }
+  /** Need / Greed / Pass windows for every friend in the raid. */
+  raidRolls(raid, items, dur) {
+    this.lootRaid = raid;
+    for (const gst of this.guests.values()) if (gst.proxy && raid.raiders.includes(gst.proxy)) this.send(gst, { t: 'rolls', dur, l: items.map(plainItem) });
+  }
+  rollResult(i, res) { for (const gst of this.guests.values()) if (gst.proxy) this.send(gst, { t: 'roll_res', i, res }); }
+  /** A friend won: it goes in their bags (on their own machine). Dropped out just now? They get it when they're back. */
+  giveLoot(u, item) {
+    const gst = this.byProxy.get(u) || [...this.guests.values()].find(g => g.proxy?.name === u.name);
+    if (gst?.proxy) this.send(gst, { t: 'loot_won', item: plainItem(item) });
+    else (this.pendingLoot ||= []).push({ name: u.name, item: plainItem(item) });
+  }
   /** Host left the raid: friends come back to the Vale beside the portal. */
   raidEnd(base) {
     this.resetKnown(); this.raidLive = false;

@@ -323,14 +323,18 @@ export class ResultsScreen extends Screen {
     if (d.worldFirst) h('span', 'flag wf', this.flags, 'WORLD FIRST');
     if (d.personalBest) h('span', 'flag pb', this.flags, 'Personal Best');
     if (d.dragon && d.dragon.affix) h('span', 'flag af', this.flags, `Affix: ${d.dragon.affix}`);
+    this.setLoot(d.loot, d.rolling);
+  }
+  /** What you won (it fills in as the rolls finish; `rolling`: some are still being rolled for). */
+  setLoot(loot = [], rolling = false) {
     this.loot.textContent = '';
-    for (const it of d.loot || []) {
+    for (const it of loot) {
       const r = h('div', 'rli ptr', this.loot);
       const s = h('div', 'evd-slot q-' + rarityName(it.rarity), r); h('img', 'ic', s).src = iconURL(it.icon, 64, { rarity: it.rarity });
       h('span', '', r, it.name).style.color = rarityColor(it.rarity);
       r._tip = () => ({ type: 'item', item: it });
     }
-    if (!(d.loot || []).length) h('div', 'rnone', this.loot, 'The SimPlayers rolled better. As always.');
+    if (!loot.length) h('div', 'rnone', this.loot, rolling ? 'Rolling for loot…' : 'The SimPlayers rolled better. As always.');
   }
 }
 

@@ -2,7 +2,7 @@
 // Follow. Trades with friends travel through the host (net/host.js routes them); trades with SimPlayers are answered
 // by a small haggling bot right here, since a SimPlayer's gold only exists as a line of chat.
 import { bus } from './events.js';
-import { makeGear, SLOTS, ITEMS } from './items.js';
+import { makeGear, SLOTS, ITEMS, isTwoHand, makeCosmetic } from './items.js';
 import { uiItem } from './hud.js';
 import { fmtMoney } from './game.js';
 import { iconURL } from '../ui/icons.js';
@@ -17,7 +17,9 @@ const CSS = `
 .evd-pmenu button:hover,.evd-pmenu button:focus-visible{background:rgba(255,210,120,.12);outline:none}
 .evd-pmenu button:disabled{color:#7a6e58;cursor:default;background:none}
 .evd-ptrade,.evd-pinspect{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);pointer-events:auto;padding:18px 18px 16px;color:#f2e2bc;font-family:var(--font)}
-.evd-pinspect{width:380px}.evd-ptrade{width:560px}
+.evd-pinspect{width:640px;max-width:calc(100vw - 32px);box-sizing:border-box}.evd-ptrade{width:560px}
+.evd-pinspect .slots{display:grid;grid-template-columns:1fr 1fr;column-gap:16px}.evd-pinspect .slots>p{grid-column:1/-1}
+@media (max-width:700px){.evd-pinspect .slots{grid-template-columns:1fr}}
 .evd-pw .x{position:absolute;right:8px;top:6px;background:none;border:0;color:#c9b890;font:18px/1 sans-serif;cursor:pointer;padding:6px}
 .evd-pw h3{margin:0 0 2px;font:700 20px var(--serif);color:var(--gold);text-shadow:var(--ol)}
 .evd-pw .sub{margin:0 0 12px;font-size:13px;color:#c9b890}
@@ -45,7 +47,8 @@ const CSS = `
 .evd-pw .foot button.dark{background:linear-gradient(#3a2c1c,#1c140c)}
 .evd-pw .foot button:disabled{opacity:.5;cursor:default}
 `;
-const SLOT_LABEL = { head: 'Head', shoulders: 'Shoulder', chest: 'Chest', hands: 'Hands', legs: 'Legs', feet: 'Feet', weapon: 'Weapon', back: 'Back', waist: 'Waist', wrist: 'Wrist', neck: 'Neck', ring: 'Ring', trinket: 'Trinket' };
+const SLOT_LABEL = { head: 'Head', neck: 'Neck', shoulders: 'Shoulder', back: 'Back', chest: 'Chest', shirt: 'Shirt', tabard: 'Tabard', wrist: 'Wrist', hands: 'Hands', waist: 'Waist', legs: 'Legs', feet: 'Feet',
+  finger1: 'Finger', finger2: 'Finger', trinket1: 'Trinket', trinket2: 'Trinket', weapon: 'Main Hand', offhand: 'Off Hand', ranged: 'Ranged' };
 const RMUL = { poor: 0.4, common: 1.2, uncommon: 1.8, rare: 2.8, epic: 4.5 };
 const isPlayer = u => u && (u.kind === 'sim' || u.kind === 'remote');
 const cap = s => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
@@ -147,22 +150,25 @@ export class Interactions {
   /** What a unit is wearing (friends send their own gear; SimPlayers get a consistent set for their gear tier). */
   inspectData(u) {
     const eq = u === this.player || u.kind === 'remote' ? (u.equip || {}) : this.simGear(u);
-    return { name: u.name, level: u.level, race: u.race, cls: u.cls, guild: u.guild || null, items: SLOTS.map(s => [s, eq[s] || null]) };
+    return { name: u.name, level: u.level, race: u.race, cls: u.cls, guild: u.guild || null, items: SLOTS.filter(s => eq[s] || (s !== 'shirt' && s !== 'tabard')).map(s => [s, eq[s] || null]) };
   }
   simGear(u) {
     if (u._gear) return u._gear;
     const rng = new RNG('inspect-' + u.id + u.name), tier = u.gearTier ?? 1, eq = {};
     const gcls = u.cls === 'mage' || u.cls === 'priest' ? u.cls : 'warrior';
     for (const s of SLOTS) {
+      const type = s.replace(/[12]$/, '');
+      if (type === 'shirt' || type === 'tabard') { if (rng.next() < 0.4) eq[s] = makeCosmetic(rng.pick(type === 'shirt' ? ['shirtWhite', 'shirtRed', 'shirtBlue', 'shirtBlack'] : ['tabardDawn', 'tabardCrown', ...(tier >= 3 ? ['tabardMaw'] : [])])); continue; }
+      if (type === 'offhand' && (gcls === 'warrior' || isTwoHand(eq.weapon))) continue;
       if (tier === 0 && rng.next() < 0.35) continue;
       const rarity = tier >= 3 ? (rng.next() < 0.55 ? 'epic' : 'rare') : tier === 2 ? (rng.next() < 0.5 ? 'rare' : 'uncommon') : tier === 1 ? (rng.next() < 0.7 ? 'uncommon' : 'common') : 'common';
-      eq[s] = makeGear(rng, gcls, u.level + tier * 2, rarity, s);
+      eq[s] = makeGear(rng, gcls, u.level + tier * 2, rarity, type);
     }
     return (u._gear = eq);
   }
   showInspect(d) {
     this.closeWindow();
-    const w = this.window('evd-pinspect');
+    const w = this.window('evd-pinspect'); w.body.className = 'slots';
     w.h3.textContent = d.name;
     w.sub.textContent = `Level ${d.level} ${cap(d.race)} ${cap(d.cls)}${d.guild ? ` <${d.guild}>` : ''}`;
     let sum = 0, n = 0;
@@ -172,7 +178,7 @@ export class Interactions {
       const sl = document.createElement('span'); sl.className = 'sl'; sl.textContent = SLOT_LABEL[slot] || slot;
       const nm = document.createElement('span'); nm.className = 'nm';
       const il = document.createElement('span'); il.className = 'il';
-      if (it) { ic.style.backgroundImage = `url("${iconURL(it.icon || 'unknown', 64)}")`; ic.style.setProperty('--rc', rarityColor(it.rarity)); nm.textContent = it.name; nm.style.color = rarityColor(it.rarity); il.textContent = it.ilvl ? `ilvl ${it.ilvl}` : ''; row._tip = () => ({ type: 'item', item: uiItem(it) }); sum += it.ilvl || 0; n++; }
+      if (it) { ic.style.backgroundImage = `url("${iconURL(it.icon || 'unknown', 64)}")`; ic.style.setProperty('--rc', rarityColor(it.rarity)); nm.textContent = it.name; nm.style.color = rarityColor(it.rarity); il.textContent = it.ilvl ? `ilvl ${it.ilvl}` : ''; row._tip = () => ({ type: 'item', item: uiItem(it) }); if (!it.cosmetic) { sum += it.ilvl || 0; n++; } }
       else { nm.textContent = 'Empty'; nm.style.color = '#6a604e'; }
       row.append(sl, ic, nm, il); w.body.appendChild(row);
     }

@@ -49,7 +49,7 @@ export function fillSlot(s, e, placeholder) {
 }
 
 // ------------------------------------------------------------------------------------ character
-const LEFT = [['head', 'helm', 'Head'], ['neck', 'trinket', 'Neck'], ['shoulder', 'shoulders', 'Shoulder'], ['back', 'cloak', 'Back'], ['chest', 'chest', 'Chest'], ['shirt', 'robe', 'Shirt'], ['tabard', 'robe', 'Tabard'], ['wrist', 'gloves', 'Wrist']];
+const LEFT = [['head', 'helm', 'Head'], ['neck', 'amulet', 'Neck'], ['shoulder', 'shoulders', 'Shoulder'], ['back', 'cloak', 'Back'], ['chest', 'chest', 'Chest'], ['shirt', 'shirt', 'Shirt'], ['tabard', 'tabard', 'Tabard'], ['wrist', 'bracers', 'Wrist']];
 const RIGHT = [['hands', 'gloves', 'Hands'], ['waist', 'belt', 'Waist'], ['legs', 'legs', 'Legs'], ['feet', 'boots', 'Feet'], ['finger1', 'ring', 'Finger'], ['finger2', 'ring', 'Finger'], ['trinket1', 'trinket', 'Trinket'], ['trinket2', 'trinket', 'Trinket']];
 const BOTTOM = [['mainhand', 'sword', 'Main Hand'], ['offhand', 'shield', 'Off Hand'], ['ranged', 'bow', 'Ranged']];
 
@@ -65,8 +65,19 @@ export class CharacterPanel extends Window {
     this.slots = {};
     const mk = (parent, [id, ph, label]) => {
       const s = itemSlot(parent); s.ph = ph; s.label = label; s.classList.add('empty');
-      s._tip = () => s._item ? { type: 'item', item: s._item, playerLevel: this.level } : { type: 'text', title: label };
-      s.addEventListener('contextmenu', e => { e.preventDefault(); if (s._item) ui.emit('unequip', id, s._item); });
+      s._tip = () => s.dim ? { type: 'text', title: 'Off Hand', lines: ['Your two-handed weapon takes both hands.'] } : s._item ? { type: 'item', item: s._item, playerLevel: this.level } : { type: 'text', title: label };
+      // click (or right-click) takes a piece off into the bags; shift-click links it; drag it onto the bags works too
+      const off = () => { if (s._item && !s.dim) ui.emit('unequip', id, s._item); };
+      s.addEventListener('click', e => { if (s._dragged) { s._dragged = false; return; } if (e.shiftKey) { if (s._item && !s.dim) ui.emit('linkItem', s._item); return; } off(); });
+      s.addEventListener('contextmenu', e => { e.preventDefault(); off(); });
+      s.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || e.shiftKey || !s._item || s.dim || e.pointerType === 'touch') return;
+        const x0 = e.clientX, y0 = e.clientY;
+        const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return; done(); s._dragged = true; dragIcon(ev, s._item.icon, (x, y, els) => { if (els.some(n => n.closest?.('.evd-win-bags'))) ui.emit('unequip', id, s._item); setTimeout(() => { s._dragged = false; }, 0); }); };
+        const done = () => { removeEventListener('pointermove', mv, true); removeEventListener('pointerup', done, true); };
+        addEventListener('pointermove', mv, true); addEventListener('pointerup', done, true);
+      });
+      s.dataset.slot = id;
       this.slots[id] = s;
     };
     LEFT.forEach(d => mk(colL, d)); RIGHT.forEach(d => mk(colR, d));
@@ -87,7 +98,7 @@ export class CharacterPanel extends Window {
     const c = h('span', '', this.sub, CLASS_NAMES[d.cls] || d.cls || ''); c.style.color = classColor(d.cls);
     if (d.guild) h('div', 'cg', this.sub, `<${d.guild}>`);
     this._filled = true;
-    for (const id in this.slots) fillSlot(this.slots[id], d.slots && d.slots[id], this.slots[id].ph);
+    for (const id in this.slots) { const s = this.slots[id]; s.dim = id === 'offhand' && !d.slots?.offhand && !!d.twoHand; fillSlot(s, s.dim ? d.twoHand : d.slots && d.slots[id], s.ph); s.classList.toggle('dim', s.dim); }
     this.stats.textContent = '';
     for (const g of d.statGroups || []) {
       const box = h('div', 'sg', this.stats);
@@ -117,6 +128,8 @@ export class Bags extends Window {
     const j = this.cells.findIndex(c => els.includes(c));
     if (j >= 0) { if (j !== i) this.ui.emit('bagMove', i, j); return; }
     if (els.some(n => n.closest?.('.evd-win-merchant'))) { this.ui.emit('bagSell', i); return; }
+    const doll = els.find(n => n.closest?.('.evd-win-character .evd-slot'))?.closest('.evd-slot');
+    if (doll?.dataset.slot) { this.ui.emit('equipTo', i, doll.dataset.slot); return; } // onto a slot: that slot (which ring, which trinket)
     if (els.some(n => n.closest?.('.evd-win-character'))) { this.ui.emit('useItem', i, this.cells[i]._item); return; }
     const bar = els.find(n => n.classList?.contains('evd-abslot'));
     if (bar) { const j = this.ui.actionBar.slots.findIndex(s => s.el === bar); if (j >= 0 && j < 10) this.ui.emit('barItem', j, i); return; } // usable items go on the bar

@@ -10,7 +10,8 @@ import { MOBS, mobStats } from './data/mobs.js';
 import { CLASSES, xpToNext, mobXP, MAX_LEVEL } from './data/classes.js';
 import { SPELLS } from './data/spells.js';
 import { NPCS, QUESTS, QUEST } from './data/quests.js';
-import { ITEMS, makeGear, SLOTS, nextUid } from './items.js';
+import { ITEMS, makeGear, SLOTS, nextUid, slotsFor, isTwoHand, gearTypes, makeCosmetic, COSMETICS } from './items.js';
+import { resolveGear } from '../models/humanoid/gear.js';
 import { CAMPS, PLACES, WATER_Y } from '../world/zone.js';
 import { createModel } from '../models/factory.js';
 import { MOUNTS } from './companions.js';
@@ -20,6 +21,28 @@ import { G } from '../engine/materials.js';
 import { Social } from './social.js';
 import { Duels } from './duel.js';
 import { ZONES, zoneOf } from './zones.js';
+
+// What a character looks like: the class's gear preset for its second-best armor tier (one epic doesn't make a full
+// set), with the tabard, shirt and off-hand it wears on top.
+const LOOK_SLOTS = ['head', 'shoulders', 'chest', 'hands', 'legs', 'feet', 'back', 'weapon'];
+export const lookTier = eq => { const t = LOOK_SLOTS.map(s => eq?.[s]?.tier || 0).sort((a, b) => b - a); return Math.min(3, t[1] ?? 0); };
+export function lookSpec(cls, tier, eq = {}) {
+  const t = eq.tabard?.look, sh = eq.shirt?.look, off = cls !== 'warrior' && eq.offhand;
+  if (!t && !sh && !off) return `${cls}:${tier}`;
+  const g = resolveGear(`${cls}:${tier}`);
+  if (t) { g.tabard = { emblem: t.emblem, back: true }; g.colors.tabard = t.color; g.colors.emblem = t.trim; }
+  if (sh) g.colors.shirt = sh.color;
+  if (off) g.offHand = { type: off.held || 'book', tier: Math.min(3, off.tier || 0), glow: (off.tier || 0) >= 3 };
+  else if (cls !== 'warrior' && isTwoHand(eq.weapon)) g.offHand = null; // both hands on the staff
+  return g;
+}
+/** Dress a unit's model in `spec`, and remember it so friends who see the unit later get the same look (net/codec.js). */
+export function setLook(u, spec) {
+  u.model?.setGear?.(spec);
+  const m = u.model?.spec; if (Array.isArray(m) && m[1]) u.model.spec = [m[0], { ...m[1], gear: spec }];
+}
+const RANK = ['poor', 'common', 'uncommon', 'rare', 'epic', 'legendary'];
+const gearScore = it => !it ? -1 : (it.ilvl || 0) * 10 + RANK.indexOf(it.rarity) * 5;
 
 // Ember Marks: every dragon kill pays them; the Quartermaster takes them
 export const MARKS_PER_KILL = 5;
@@ -123,8 +146,8 @@ export class GameState {
     u.hp = u.hpMax; u.power = u.powerType === 'rage' ? 0 : u.powerMax;
     u.pos.y = this.world.heightAt(u.pos.x, u.pos.z);
     { const [mx, mz] = NPCS.dunmore.pos; u.facing = Math.atan2(-(mx - u.pos.x), -(mz - u.pos.z)); } // face the first quest giver
-    { const tiers = SLOTS.map(s => u.equip[s]?.tier || 0).sort((a, b) => b - a); u.gearLook = Math.min(3, tiers[1] ?? 0); }
-    this.addModel(u, ['humanoid', { race: u.race, sex: u.sex, cls: u.cls, ...u.appearance, gearTier: u.gearLook, seed: u.appearance?.seed ?? 7 }]);
+    u.gearLook = lookTier(u.equip); const look = lookSpec(u.cls, u.gearLook, u.equip); u.lookKey = JSON.stringify(look);
+    this.addModel(u, ['humanoid', { race: u.race, sex: u.sex, cls: u.cls, ...u.appearance, gearTier: u.gearLook, gear: look, seed: u.appearance?.seed ?? 7 }]);
     this.sim.add(u);
     this.player = u;
     this.pc = new PlayerController(this, u);
@@ -156,7 +179,11 @@ export class GameState {
   premadeGear(cls) {
     const rng = new RNG('everdawn-premade-' + cls);
     const eq = {};
-    for (const slot of SLOTS) eq[slot] = makeGear(rng, cls, 12, slot === 'weapon' || slot === 'chest' ? 'rare' : 'uncommon', slot);
+    for (const pos of SLOTS) {
+      const type = pos.replace(/[12]$/, '');
+      if (type === 'shirt' || type === 'tabard' || type === 'offhand' && (cls === 'warrior' || isTwoHand(eq.weapon))) continue;
+      eq[pos] = makeGear(rng, cls, 12, type === 'weapon' || type === 'chest' ? 'rare' : 'uncommon', type);
+    }
     return eq;
   }
 
@@ -288,9 +315,9 @@ export class GameState {
   }
   addGear(item, autoEquip = true) {
     const u = this.player;
-    const cur = u.equip[item.slot];
-    const score = it => !it ? -1 : (it.ilvl || 0) * 10 + ['poor', 'common', 'uncommon', 'rare', 'epic', 'legendary'].indexOf(it.rarity) * 5;
-    if (autoEquip && item.cls === u.cls && score(item) > score(cur)) {
+    const pos = this.equipSlot(item), cur = u.equip[pos];
+    const displaces = isTwoHand(item) && u.equip.offhand || item.slot === 'offhand' && isTwoHand(u.equip.weapon); // never swap hands on your behalf
+    if (autoEquip && this.canWear(item) && !displaces && (item.cosmetic ? !cur : gearScore(item) > gearScore(cur))) {
       u.bags.push({ gear: item, count: 1 });
       this.equip(item);
       bus.emit('chat', { ch: 'system', text: `You equip [${item.name}].`, links: [{ name: item.name, rarity: item.rarity, item }] });
@@ -337,15 +364,18 @@ export class GameState {
     const def = NPCS[npcId], u = this.player;
     if (def?.vendor === 'gear') { // the smith: pieces for your class, and a pick for the mines
       const rng = new RNG('smith-' + u.cls + '-' + u.level), L = Math.max(2, u.level + 1);
-      return ['weapon', 'chest', 'legs', 'head', 'shoulders', 'feet'].map((slot, i) => {
+      return ['weapon', 'chest', 'legs', 'head', 'shoulders', 'feet', 'wrist', 'waist'].map((slot, i) => {
         const g = makeGear(rng, u.cls, L, i < 2 ? 'uncommon' : 'common', slot);
         return { gear: g, price: Math.round((g.sell || 5) * 25 * 5), count: 1 };
       }).concat([{ id: 'miningPick', price: PRICE.miningPick, count: 1 }]);
     }
     if (def?.vendor === 'marks') { // the Quartermaster: pre-raid gear a step below the dragon's, and some fun
-      const rng = new RNG('quartermaster-' + u.cls), cost = { head: 8, shoulders: 7, chest: 10, hands: 6, legs: 9, feet: 6, back: 5, weapon: 12 };
-      const gear = SLOTS.map(slot => { const g = makeGear(rng, u.cls, 13, 'rare', slot); g.name = g.name.replace(/^\S+/, 'Maw-Tested'); return { gear: g, marks: cost[slot], count: 1 }; });
-      return [...gear, { id: 'firework', marks: 1, count: 5 }, { id: 'mawElixir', marks: 2, count: 1 }, { id: 'dragonscalePole', marks: 8, count: 1 }, { id: 'emberling', marks: 15, count: 1 }, { id: 'striderReins', marks: 40, count: 1 }];
+      const rng = new RNG('quartermaster-' + u.cls), cost = { head: 8, neck: 6, shoulders: 7, back: 5, chest: 10, wrist: 4, hands: 6, waist: 5, legs: 9, feet: 6, finger: 6, trinket: 8, weapon: 12, offhand: 6, ranged: 5 };
+      const gear = gearTypes(u.cls).map(slot => { const g = makeGear(rng, u.cls, 13, 'rare', slot); g.name = g.name.replace(/^\S+/, 'Maw-Tested'); return { gear: g, marks: cost[slot], count: 1 }; });
+      return [...gear, { gear: makeCosmetic('tabardMaw'), marks: COSMETICS.tabardMaw.marks, count: 1 }, { id: 'firework', marks: 1, count: 5 }, { id: 'mawElixir', marks: 2, count: 1 }, { id: 'dragonscalePole', marks: 8, count: 1 }, { id: 'emberling', marks: 15, count: 1 }, { id: 'striderReins', marks: 40, count: 1 }];
+    }
+    if (def?.vendor === 'tailor') { // shirts and tabards: for looks, so there are always more
+      return def.stock.map(id => ({ gear: makeCosmetic(id), price: COSMETICS[id].price, count: 1, always: true }));
     }
     const list = (Array.isArray(def?.vendor) ? def.vendor : []).map(id => ({ id, price: PRICE[id] || 50, count: 1 }));
     return list;
@@ -354,7 +384,7 @@ export class GameState {
   buyMarks(e, n = 1) {
     const u = this.player, cost = e.marks * n;
     if ((u.marks || 0) < cost) { bus.emit('error', { unit: u, msg: "You don't have enough Ember Marks." }); return false; }
-    if (e.gear) { u.marks -= cost; u.bags.push({ gear: { ...e.gear, stats: { ...e.gear.stats }, uid: nextUid() }, count: 1 }); } // a fresh copy: the Quartermaster never runs out
+    if (e.gear) { const { _ui, ...g } = e.gear; u.marks -= cost; u.bags.push({ gear: { ...g, stats: { ...g.stats }, uid: nextUid() }, count: 1 }); } // a fresh copy: the Quartermaster never runs out
     else { if (ITEMS[e.id].use === 'pet' || ITEMS[e.id].use === 'mount' || ITEMS[e.id].tool) { if (this.countItem(e.id)) { bus.emit('error', { unit: u, msg: 'You already have one.' }); return false; } } u.marks -= cost; this.addItem(e.id, e.count * n); }
     bus.emit('bags_changed', { unit: u }); bus.emit('marks', { amount: -cost });
     return true;
@@ -370,18 +400,53 @@ export class GameState {
     if (u.gold < price) { bus.emit('error', { unit: u, msg: "You don't have enough money." }); return false; }
     u.gold -= price; this.addItem(id, n); bus.emit('money', { amount: -price }); return true;
   }
-  equip(item) {
+  /** Can the player wear it? (Class gear is for its class; shirts and tabards fit anyone.) */
+  canWear(item) { return !!item?.gear && (!item.cls || item.cls === this.player.cls) && item.slot !== 'mount'; }
+  /** Which slot an item goes in: `want` if it fits there, else an empty one of its slots, else the weaker piece's. */
+  equipSlot(item, want) {
+    const eq = this.player.equip, spots = slotsFor(item.slot);
+    if (spots.includes(want)) return want;
+    return spots.find(s => !eq[s]) || spots.reduce((a, b) => (gearScore(eq[b]) < gearScore(eq[a]) ? b : a));
+  }
+  /** What wearing `item` changes: { slot: item | null } (for DPS previews; a two-hander takes the off-hand too). */
+  swapFor(item, want) {
+    const eq = this.player.equip, pos = this.equipSlot(item, want), out = { [pos]: item };
+    if (isTwoHand(item)) out.offhand = null;
+    if (item.slot === 'offhand' && isTwoHand(eq.weapon)) out.weapon = null;
+    return out;
+  }
+  /** Put on a piece from the bags (into slot `want` when it fits there). The piece it replaces goes to the bags. */
+  equip(item, want) {
     const u = this.player;
-    const old = u.equip[item.slot];
-    u.equip[item.slot] = item;
+    if (!this.canWear(item)) { bus.emit('error', { unit: u, msg: "You can't equip that." }); return false; }
+    const swap = this.swapFor(item, want);
     u.bags = u.bags.filter(b => b.gear !== item);
-    if (old) u.bags.push({ gear: old, count: 1 });
-    this.applyGear(u);
-    const tiers = SLOTS.map(s => u.equip[s]?.tier || 0).sort((a, b) => b - a);
-    const tier = Math.min(3, tiers[1] ?? tiers[0] ?? 0); // look follows your second-best piece (one epic doesn't make a full set)
-    if (tier !== u.gearLook) { u.gearLook = tier; u.model?.setGear?.(`${u.cls}:${tier}`); }
+    let old = null;
+    for (const [pos, it] of Object.entries(swap)) {
+      const was = u.equip[pos]; if (was === item) continue;
+      if (was) { u.bags.push({ gear: was, count: 1 }); if (it) old = was; }
+      u.equip[pos] = it;
+    }
+    this.gearChanged(u);
     bus.emit('equip_changed', { unit: u, item, old });
     bus.emit('bags_changed', { unit: u });
+    this.pc?.offerShoot?.();
+    return true;
+  }
+  /** Take off what's in `pos` and put it in the bags. */
+  unequip(pos) {
+    const u = this.player, it = u.equip[pos]; if (!it) return false;
+    u.equip[pos] = null; u.bags.push({ gear: it, count: 1 });
+    this.gearChanged(u);
+    bus.emit('equip_changed', { unit: u, item: null, old: it });
+    bus.emit('bags_changed', { unit: u });
+    return true;
+  }
+  /** Stats and looks after a gear change: the model shows the second-best tier plus a tabard, shirt and off-hand. */
+  gearChanged(u) {
+    this.applyGear(u);
+    const tier = lookTier(u.equip), spec = lookSpec(u.cls, tier, u.equip), key = JSON.stringify(spec);
+    if (key !== u.lookKey) { u.gearLook = tier; u.lookKey = key; setLook(u, spec); bus.emit('look', { unit: u, spec: key }); } // friends see it too (net/host.js)
   }
   useItem(id) {
     const u = this.player, def = ITEMS[id];
@@ -475,7 +540,7 @@ export class GameState {
     if (q.rewards !== 'gear' && q.rewards !== 'rare') return null;
     const u = this.player, rng = new RNG(q.id + u.name);
     const rarity = q.rewards === 'rare' ? 'rare' : 'uncommon';
-    const slots = rng.shuffle(['shoulders', 'chest', 'weapon', 'head', 'legs', 'hands', 'feet']).slice(0, 3);
+    const slots = rng.shuffle(gearTypes(u.cls)).slice(0, 3);
     return slots.map(s => makeGear(rng, u.cls, q.level + 3, rarity, s));
   }
   progressQuests(pred, amount = 1) {

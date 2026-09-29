@@ -8,7 +8,7 @@ import { G, lambert } from './engine/materials.js';
 import { bus } from './game/events.js';
 import { World } from './world/world.js';
 import { GameState } from './game/game.js';
-import { HUD } from './game/hud.js';
+import { HUD, uiItem } from './game/hud.js';
 import { RaidState } from './game/raid/director.js';
 import { RaidBrain } from './game/raid/raidai.js';
 import { DirectorCam } from './game/raid/directorcam.js';
@@ -372,7 +372,7 @@ class App {
     this.ui.popups.close('title'); // a title prompt left open must not restart the character later
     if (g.player) { g.sim.remove(g.player); g.player = null; }
     const p = g.createPlayer(ch);
-    if (ch.jump && !ch.equip) Object.assign(p.equip, g.premadeGear(p.cls));
+    if (ch.jump && !ch.equip) { Object.assign(p.equip, g.premadeGear(p.cls)); g.gearChanged(p); }
     g.levelStats(p); p.hp = p.hpMax; p.power = p.powerType === 'rage' ? 0 : p.powerMax;
     g.refreshBar();
     this.ui.screen(null);
@@ -506,7 +506,7 @@ class App {
     this.ring.attach(this.raid.scene);
     this.cam.heightFn = (x, z) => this.raid.lair.heightAt(x, z);
     this.cam.boxes = null; this.cam._first = true; this.cam.yaw = 0; this.cam.pitch = 0.35; this.cam.distTarget = 11;
-    this.mode = 'raid'; this.raidDone = false; this.hud.raidTracker = false; this.companions.dismount(p); this.companions.reparent();
+    this.mode = 'raid'; this.raidDone = false; this.raidWon = []; this.hud.raidTracker = false; this.companions.dismount(p); this.companions.reparent();
     this.ui.setHUDVisible(true);
     this.music('danger');
     this.dcam = this.dcam || new DirectorCam(this.camera); this.dcam.reset();
@@ -602,7 +602,7 @@ class App {
       this.ring.attach(this.raid.scene);
       this.cam.heightFn = (x, z) => this.raid.lair.heightAt(x, z);
       this.cam.boxes = null; this.cam._first = true; this.cam.yaw = 0; this.cam.pitch = 0.35; this.cam.distTarget = 11;
-      this.mode = 'raid'; this.raidDone = false; this.companions.reparent();
+      this.mode = 'raid'; this.raidDone = false; this.raidWon = []; this.companions.reparent();
       this.hud.raidTracker = false;
       this.ui.screen(null); this.ui.setHUDVisible(true);
       this.music('danger');
@@ -634,6 +634,9 @@ class App {
     this.net?.raidEnd(p.pos);
   }
 
+  /** You won `item` from the dragon (host or friend): the results screen's Loot Won fills in. */
+  lootWon(item) { this.raidWon ||= []; if (item) this.raidWon.push(item); if (this.ui.results?.d) this.ui.results.setLoot(this.raidWon.map(it => uiItem(it)), this.rollsPending()); }
+  rollsPending() { return this.guest ? (this.guest.rollsLeft || 0) > 0 : !!this.raid?.rolls?.some?.(r => !r.done); }
   async onVictory(result) {
     const g = this.game, p = g.player, d = this.raid.dragon;
     const role = p.raidRole === 'heal' ? 'heal' : p.raidRole;
@@ -651,7 +654,7 @@ class App {
     this.ui.results.set({
       victory: true, bossName: `${d.name}, ${d.title}`, dragon: { name: d.name, element: d.element }, time: result.killTime, dps: Math.round(result.player.dps), hps: Math.round(result.player.hps),
       parse, cls: p.cls, name: p.name, rank: pos >= 0 ? { pos: pos + 1, of: Math.max(b.fastest.length, b.total || 0) } : undefined,
-      deaths: entry.deaths, worldFirst: !!sub?.world_first, personalBest: false, loot: result.loot.map(it => ({ name: it.name, rarity: it.rarity, icon: it.icon })),
+      deaths: entry.deaths, worldFirst: !!sub?.world_first, personalBest: false, loot: (this.raidWon || []).map(it => uiItem(it)), rolling: this.rollsPending(),
     });
     this.ui.screen('results');
     this.save();

@@ -19,6 +19,7 @@ import { RNG } from '../../core/noise.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const pick = (rng, a) => a[Math.floor(rng.next() * a.length)];
+const ROLL_TIME = 30; // seconds to choose Need / Greed / Pass
 
 export class RaidState {
   constructor(engine, { dragon, player, social, world, watch = false, guests = [] }) {
@@ -285,9 +286,11 @@ export class RaidState {
     if (!this.watch) { this.player.marks = (this.player.marks || 0) + MARKS_PER_KILL; bus.emit('marks', { amount: MARKS_PER_KILL }); this.combat.later(2, () => this.social.post('system', null, `You receive ${MARKS_PER_KILL} Ember Marks. Spend them with Quartermaster Brannoc in Dawnhollow.`)); }
     // loot
     const loot = [];
-    const classes = [...new Set(this.raiders.map(m => m.cls))];
-    const clsFor = () => rng.next() < 0.45 ? this.player.cls : pick(rng, classes.filter(c => ['warrior', 'mage', 'priest'].includes(c)).concat(['warrior', 'mage', 'priest']));
-    for (let i = 0; i < 3; i++) loot.push(makeGear(rng, clsFor(), 14, 'epic', pick(rng, ['weapon', 'chest', 'shoulders', 'head', 'legs', 'hands'])));
+    const classes = [...new Set(this.raiders.map(m => m.cls))], humans = this.raiders.filter(m => m === this.player || m.kind === 'remote');
+    // about half the drops are for the real players' classes (you and your friends alike), the rest for anyone
+    const clsFor = () => rng.next() < 0.5 ? pick(rng, humans).cls : pick(rng, classes.filter(c => ['warrior', 'mage', 'priest'].includes(c)).concat(['warrior', 'mage', 'priest']));
+    // five drops: ten raiders roll on them
+    for (let i = 0; i < 5; i++) loot.push(makeGear(rng, clsFor(), 14, 'epic', pick(rng, ['weapon', 'chest', 'shoulders', 'head', 'legs', 'hands', 'neck', 'finger', 'trinket', 'waist', 'wrist', 'back', 'feet'])));
     // something rarer than purple: one orange item, a few kills in a hundred (not the day's seeded rng: anyone can get lucky)
     if (Math.random() < LEGENDARY_CHANCE || this.e.forceLegendary) {
       const it = makeLegendary(clsFor()); loot.unshift(it);
@@ -309,34 +312,65 @@ export class RaidState {
     };
     this.result = result;
     if (this.watch) loot.forEach((it, i) => this.combat.later(4 + i * 1.6, () => this.resolveRoll(it, 'pass')));
-    else this.combat.later(3.5, () => bus.emit('raid_loot', { items: loot, raid: this }));
+    else this.combat.later(3.5, () => this.openRolls(loot));
     bus.emit('raid_state', { state: 'victory', result });
   }
 
-  // loot roll resolution (player's choice: 'need' | 'greed' | 'pass')
-  resolveRoll(item, choice) {
+  // Need / Greed / Pass: you and each friend choose in your own roll windows (friends' choices come over the network);
+  // an item rolls once every real player has chosen, or when the time runs out (anyone who didn't choose passes).
+  openRolls(loot) {
+    const humans = this.raiders.filter(m => m === this.player || m.kind === 'remote');
+    this.rolls = loot.map((it, i) => ({ i, it, humans, choices: new Map(), done: false }));
+    bus.emit('raid_loot', { items: loot, raid: this });
+    this.e.net?.raidRolls?.(this, loot, ROLL_TIME);
+    clearTimeout(this.rollTimer);
+    this.rollTimer = setTimeout(() => this.rolls?.forEach(r => this.finishRoll(r)), (ROLL_TIME + 3) * 1000); // real time: the raid may be left behind
+  }
+  chooseRoll(i, unit, choice) {
+    const r = this.rolls?.[i]; if (!r || r.done || !r.humans.includes(unit)) return;
+    r.choices.set(unit, ['need', 'greed', 'pass'].includes(choice) ? choice : 'pass');
+    if (r.humans.every(h => r.choices.has(h) || (h !== this.player && !this.raiders.includes(h)))) this.finishRoll(r); // a friend who left doesn't hold it up
+  }
+  finishRoll(r) {
+    if (r.done) return; r.done = true;
+    const win = this.resolveRoll(r.it, r.choices);
+    const res = { rolls: (win?.rolls || []).map(x => ({ name: x.m.name, cls: x.m.cls, type: x.kind, roll: x.roll })), winner: win?.m.name || null };
+    bus.emit('roll_result', { i: r.i, res, raid: this });
+    if (!win || win.m !== this.player) this.e.lootWon?.(null); // (the results screen stops saying "Rolling…" once they're all done)
+    this.e.net?.rollResult?.(r.i, res);
+    if (this.rolls.every(x => x.done)) clearTimeout(this.rollTimer);
+  }
+  // loot roll resolution: `choices` is the real players' picks (Map unit → 'need' | 'greed' | 'pass', or just yours)
+  resolveRoll(item, choices) {
+    if (typeof choices === 'string') choices = new Map([[this.player, choices]]);
     const rng = this.rng, rolls = [];
     for (const m of this.raiders) {
       let kind;
-      if (m === this.player) kind = choice;
-      else if (m.kind === 'remote') kind = item.mount || item.cls === m.cls ? 'need' : 'greed'; // friends roll need on their own class's gear
+      if (m === this.player || m.kind === 'remote') kind = choices.get(m) || 'pass';
       else {
         const useful = item.mount || item.cls === m.cls || (item.cls === 'priest' && m.cls === 'paladin');
         const greedy = m.persona?.arch === 'lootgoblin' || m.persona?.arch === 'troll';
         kind = useful ? 'need' : greedy && rng.next() < 0.5 ? 'need' : rng.next() < 0.6 ? 'greed' : 'pass';
       }
-      if (kind === 'pass') continue;
+      if (kind === 'pass') { if (!this.watch && (m === this.player || m.kind === 'remote')) this.social.post('loot', null, `${m.name} passed on: [${item.name}]`, { self: m.name, links: [{ name: item.name, rarity: item.rarity, item }] }); continue; }
       const roll = 1 + Math.floor(rng.next() * 100);
       rolls.push({ m, kind, roll });
-      this.social.post('loot', null, `${m === this.player ? 'You' : m.name} ${kind === 'need' ? 'selected Need' : 'selected Greed'} for: [${item.name}] — ${roll}`, { links: [{ name: item.name, rarity: item.rarity, item }] });
+      // each player reads their own name as "You" (hud.js chatLine): the host's lines reach friends too
+      this.social.post('loot', null, `${m.name} ${kind === 'need' ? 'selected Need' : 'selected Greed'} for: [${item.name}] — ${roll}`, { self: m.name, links: [{ name: item.name, rarity: item.rarity, item }] });
     }
-    const needs = rolls.filter(r => r.kind === 'need'), pool = needs.length ? needs : rolls;
+    const needs = rolls.filter(r => r.kind === 'need'), pool = [...(needs.length ? needs : rolls)];
     pool.sort((a, b) => b.roll - a.roll);
     const win = pool[0];
     if (!win) return null;
-    this.social.post('loot', null, `${win.m === this.player ? 'You' : win.m.name} won: [${item.name}]`, { links: [{ name: item.name, rarity: item.rarity, item }] });
+    win.rolls = rolls;
+    this.social.post('loot', null, `${win.m.name} won: [${item.name}]`, { self: win.m.name, links: [{ name: item.name, rarity: item.rarity, item }] });
     if (win.m !== this.player && win.kind === 'need' && item.cls !== win.m.cls) this.combat.later(1.5, () => this.say(pick(rng, this.raiders.filter(x => x !== win.m && x.kind === 'sim')), pick(rng, ['NINJA', 'ninja looter!!', `${win.m.name} u cant even use that`, 'reported', 'wow'])));
-    if (win.m === this.player) { if (item.mount) this.worldGame.addItem('drakeReins', 1); else this.worldGame.addGear(item); this.social.react('epic', 0.9); }
+    if (win.m === this.player) {
+      if (item.mount) this.worldGame.addItem('drakeReins', 1); else this.worldGame.addGear(item);
+      bus.emit('chat', { ch: 'loot', text: `You receive loot: [${item.name}].`, links: [{ name: item.name, rarity: item.rarity, item }], $local: 1 });
+      this.e.lootWon?.(item);
+      this.social.react('epic', 0.9);
+    }
     if (item.rarity === 'legendary') { // the realm hears about it
       bus.emit('raid_warning', { text: `${win.m.name} receives ${item.name}!`, color: '#ff8000' });
       const s = pick(rng, this.social.sims.filter(x => !x.dead));

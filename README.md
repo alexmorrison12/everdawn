@@ -47,6 +47,12 @@ day, and so does the global race to kill it.
 - **Ember Marks.** Every dragon kill pays marks; the Quartermasters in Dawnhollow and Aurelion trade them for pre-raid
   gear a step below the dragon's, elixirs, fireworks, the Emberling pet and the Ashen Strider mount. The dragon's own
   drake mount is rideable, and friends see each other's mounts.
+- **A full paper doll.** All 19 of WoW's slots: head, neck, shoulders, back, chest, shirt, tabard, wrist, hands, waist,
+  legs, feet, two rings, two trinkets, main hand, off-hand and ranged. Staves are two-handed; casters can pair a one-hander
+  with a tome or orb instead. Wands and bows fire with Shoot. Tailors in Dawnhollow and Aurelion sell shirts and tabards,
+  and the tabard shows on your character. Click an equipped piece (or drag it to your bags) to take it off.
+- **Loot rolls with friends.** Everyone in the raid gets Need / Greed / Pass windows, and nothing rolls until the whole
+  group has chosen.
 - **Legendaries.** Beyond the dragon's epics, a sliver of a chance at one orange item per class, each with an effect of
   its own (dragonfire on hit, or a second heal from the dawn).
 - **The usual MMO furniture.** Spellbook (drag abilities onto your bar), quest log, a Social window, merchants who buy
@@ -96,6 +102,7 @@ work inside the Claude artifact view, whose sandbox blocks peer connections; use
 | 1 – = | Action bar (Shift-drag to move or remove an ability) |
 | Tab | Target the nearest enemy |
 | Right-click | Attack / talk / loot (Shift-click a corpse to pick items when Auto Loot is on) |
+| Click an equipped item | Take it off (into your bags); drag a bag item onto a slot to wear it there |
 | Middle-click (or Alt+click) | Waypoint for your group, on the ground, the minimap or the world map |
 | Enter | Chat (`/invite`, `/leave`, `/duel`, `/who`, `/roll`, `/logout`…) |
 | C, B, P, L, K, O, M, N, H | Character, bags, spellbook, quest log, professions, social, map, damage meter, help |
@@ -119,8 +126,8 @@ rebuilds on change, and `node tools/serve.mjs dist 5199` serves it on localhost.
 reports console errors. `node tools/mobile.mjs` checks the touch controls on an emulated phone. `node tools/coop.mjs`
 opens two browsers, hosts and joins over real WebRTC, and checks shared combat, chat and kill credit (`--raid` runs
 the dragon together, `--party` checks groups, duels and waypoints, `--refresh` and `--social` cover reconnects,
-trades and inspect). `node tools/features.mjs` checks the spellbook, quest log, merchants, loot, duels, movement, professions, mounts
-and logout on their own, and `node tools/zones.mjs` walks to the Crownlands and back (`coop.mjs --zones` does it
+trades and inspect, `--loot` the friend's loot rolls, a requeue and Ember Marks). `node tools/features.mjs` checks the
+spellbook, quest log, merchants, loot, duels, movement, professions, mounts, every gear slot and logout on their own, and `node tools/zones.mjs` walks to the Crownlands and back (`coop.mjs --zones` does it
 together).
 
 The global leaderboard is optional. Apply `supabase/schema.sql` to a Supabase project, then fill in `SUPABASE_URL`,

@@ -20,6 +20,14 @@ export class PlayerController {
   }
 
   setBar(ids) { this.bar = new Array(12).fill(null); ids.forEach((id, i) => { if (i < 12) this.bar[i] = id; }); bus.emit('bar_changed', { bar: this.bar }); }
+  /** A first wand or bow: put Shoot (Shoot Bow) on the bar, where there's room. */
+  offerShoot() {
+    const u = this.u, id = u.cls === 'warrior' ? 'shootBow' : 'shoot';
+    if (!u.equip?.ranged || this.bar.includes(id)) return;
+    const i = this.bar.findIndex((x, k) => !x && k < 10); if (i < 0) return;
+    this.bar[i] = id; this.custom = true; bus.emit('bar_changed', { bar: this.bar });
+    bus.emit('chat', { ch: 'system', text: `${SPELLS[id].name} is on your action bar: it fires your ${u.cls === 'warrior' ? 'bow' : 'wand'}.` });
+  }
 
   update(dt) {
     const g = this.g, I = g.input, u = this.u, cam = g.cam;
@@ -147,7 +155,7 @@ export class PlayerController {
     const ok = this.g.combat.cast(u, id, target);
     if (ok) bus.emit('action_used', { slot: i, id });
     // melee abilities start auto-attack even when they fail (a level 1 warrior has 0 rage: swinging is how rage comes)
-    if ((ok || sp.melee) && (sp.melee || u.cls === 'warrior') && target && !target.dead && u.isEnemy(target)) this.startAttack();
+    if ((ok || sp.melee) && (sp.melee || u.cls === 'warrior' && !sp.ranged) && target && !target.dead && u.isEnemy(target)) this.startAttack();
     return ok;
   }
 

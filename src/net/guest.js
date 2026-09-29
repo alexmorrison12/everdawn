@@ -80,6 +80,8 @@ export class GuestSession {
       case 'raid_end': this.app.guestRaidLeave?.(m); return;
       case 'raid_result': this.app.guestRaidResult?.(m); return;
       case 'loot_won': this.lootWon(m.item); return;
+      case 'rolls': this.rollsLeft = (m.l || []).length; this.app.hud?.raidLoot(m.l || [], null, (i, c) => this.net.send({ t: 'roll', i, c }), m.dur || 30); return; // Need / Greed / Pass, like the host's
+      case 'roll_res': this.rollsLeft = Math.max(0, (this.rollsLeft || 0) - 1); this.app.hud?.rollResult(m.i, m.res); this.app.lootWon?.(null); return;
       case 'inspect': this.app.interact?.showInspect(m.data); return;
       case 'trade': this.app.interact?.onTrade(this.resolve(m.from), m.m); return;
       case 'full': this.app.ui.alerts.error('That world is full (4 friends max).'); return;
@@ -227,6 +229,7 @@ export class GuestSession {
     const d = dec(data, this.resolve);
     if (!d) return;                                    // mentions a unit we haven't been sent
     if ('spellInline' in d || d.id !== undefined || d.spellId !== undefined) d.spell = spellIn(d.id ?? d.spellId, d.spellInline);
+    if (type === 'look') { if (d.unit && d.unit !== this.p) d.unit.model?.setGear?.(JSON.parse(d.spec)); return; } // a friend's new tabard or off-hand
     if (type === 'death' && d.unit) { d.unit.dead = true; if (d.unit === this.p) this.p.hp = 0; }
     if (type === 'aura_apply' || type === 'aura_remove') d.aura = { ...d.aura, def: AURAS[d.aura?.id] || { name: d.aura?.id } };
     d.$net = 1;
@@ -248,6 +251,9 @@ export class GuestSession {
   lootWon(item) {
     if (!item) return;
     if (item.mount) { if (!this.g.countItem('drakeReins')) this.g.addItem('drakeReins', 1); } else this.g.addGear(item);
+    bus.emit('chat', { ch: 'loot', text: `You receive loot: [${item.name}].`, links: [{ name: item.name, rarity: item.rarity, item }] });
+    this.app.save?.(); // it's yours: keep it even if the page closes now
+    this.app.lootWon?.(item);
     const orange = item.rarity === 'legendary';
     this.app.ui.alerts.raidWarning(`You won ${item.name}!`, orange ? '#ff8000' : '#a335ee');
     bus.emit('sound', { name: orange ? 'legendary' : 'epicLoot' });

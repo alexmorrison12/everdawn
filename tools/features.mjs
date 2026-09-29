@@ -307,7 +307,7 @@ await step('fishing: buy a pole from Gil, cast at the lake, wait for the splash,
   const before = ['trout', 'sunfish', 'oldBoot', 'pearl'].reduce((n, id) => n + g.countItem(id), 0);
   pr.reel(); await sleep(200);
   const caught = ['trout', 'sunfish', 'oldBoot', 'pearl'].reduce((n, id) => n + g.countItem(id), 0) - before;
-  return { gilSells: stock, cast, bit, caught, fishing: pr.skill('fishing'), bobberGone: !pr.bob };
+  return { gilSells: stock, cast, bit, caught, fishing: pr.skill('fishing'), bobberGone: !pr.bob, why: cast ? undefined : { inCombat: p.inCombat, swimming: p.swimming, pole: !!pr.tool('fishing'), at: [Math.round(p.pos.x), Math.round(p.pos.z)] } };
 }));
 
 await step('crafting: campfire + cooking, alchemy anywhere, blacksmithing at the forge', () => ev(async () => {
@@ -349,6 +349,49 @@ await step('the Quartermaster sells for Ember Marks; mounts, a pet and fireworks
   g.useItem('striderReins'); await sleep(100);
   return { merchantRows: rows.slice(0, 3), bought, fireworksLeft: g.countItem('firework'), pet, mounted, runSpeed: speed, riderLifted: seat, dismounted: !p.mount };
 }));
+
+await step('the whole paper doll: new slots fill, click takes a piece off, rings pick a finger, off-hand vs staff, tabard on the model, Shoot', async () => {
+  await ev(() => { const A = __game; if (!A.ui.character.isOpen) A.ui.toggle('character'); });
+  const r = await ev(async () => {
+    const A = __game, g = A.game, p = g.player, sleep = ms => new Promise(r => setTimeout(r, ms));
+    const fresh = e => ({ ...e.gear, stats: { ...e.gear.stats }, uid: 900000 + Math.floor(Math.random() * 99999), _ui: undefined });
+    const qm = g.stock('quartermaster').filter(e => e.gear && e.gear.cls);
+    for (const e of qm) g.addGear(fresh(e)); // better than nothing: each goes on
+    const ring = qm.find(e => e.gear.slot === 'finger'); g.addGear(fresh(ring)); // a second ring: the other finger
+    await sleep(400);
+    const doll = document.querySelectorAll('.evd-win-character .evd-slot').length;
+    const worn = Object.entries(p.equip).filter(([, v]) => v).map(([k]) => k);
+    // click the neck slot: it comes off into the bags
+    const n0 = p.bags.length, neck = p.equip.neck?.name;
+    document.querySelector('.evd-win-character .evd-slot[data-slot="neck"]').click();
+    await sleep(300);
+    const off = { neckGone: !p.equip.neck, inBags: p.bags.length === n0 + 1 && p.bags.at(-1).gear?.name === neck, dollEmpty: document.querySelector('.evd-win-character .evd-slot[data-slot="neck"]').classList.contains('ph') };
+    // right-click it in the bags: back on
+    A.ui.emit('useItem', p.bags.length - 1, null); await sleep(200);
+    off.backOn = p.equip.neck?.name === neck;
+    // a two-handed staff takes the off-hand with it; an off-hand pushes the staff off
+    const book = p.equip.offhand || p.bags.find(b => b.gear?.slot === 'offhand')?.gear, weapon = p.equip.weapon;
+    const staff = { ...weapon, uid: 990001, name: 'Test Staff', twoHand: true, _ui: undefined };
+    if (!p.equip.offhand) g.equip(book); // (it stayed in the bags while a two-hander was on: this puts the two-hander away)
+    p.bags.push({ gear: staff, count: 1 }); g.equip(staff); await sleep(300);
+    const hands = { staffOn: p.equip.weapon === staff, offhandToBags: !p.equip.offhand && p.bags.some(b => b.gear === book), dimmed: document.querySelector('.evd-win-character .evd-slot[data-slot="offhand"]').classList.contains('dim') };
+    g.equip(book); hands.bookOn = p.equip.offhand === book; hands.staffToBags = p.equip.weapon !== staff && p.bags.some(b => b.gear === staff);
+    // a tabard and a shirt from Clothier Odette (anyone can wear them): the model wears the tabard
+    p.gold += 50000;
+    const odette = g.stock('clothierOdette'), tab = odette.find(e => e.gear.slot === 'tabard').gear, shirt = odette.find(e => e.gear.slot === 'shirt').gear;
+    g.buyGear(tab, 1000); g.buyGear(shirt, 100); g.equip(tab); g.equip(shirt); await sleep(300);
+    const looks = { tabard: p.equip.tabard?.name, shirt: p.equip.shirt?.name, modelTabard: /"tabard":\{"emblem":"lion"/.test(p.lookKey || ''), tabardIcon: document.querySelector('.evd-win-character .evd-slot[data-slot="tabard"] img')?.src.length > 1000 };
+    // the wand: Shoot went on the bar and fires it
+    const w = g.spawnMob('wolf', p.pos.x + 12, p.pos.z, 3); w.brain.t = { ...w.brain.t, passive: true }; g.pc.setTarget(w); p.gcd = 0; p.casting = null;
+    const hp0 = w.hp, shot = g.combat.cast(p, 'shoot', w); await sleep(1200);
+    const shoot = { onBar: g.pc.bar.includes('shoot'), wand: p.equip.ranged?.name, cast: shot, hurt: w.hp < hp0 };
+    g.combat.kill(w, p);
+    return { doll, worn: worn.join(','), rings: [p.equip.finger1?.name, p.equip.finger2?.name].map(n => n?.slice(11, 30)), off, hands, looks, shoot };
+  });
+  await shot('paperdoll');
+  await ev(() => __game.ui.toggle('character'));
+  return r;
+});
 
 await step('Game Menu: Log Out goes to the title; Continue comes back with your bar layout', async () => {
   await ev(() => { const A = __game; while (A.ui.closeTop()) { /* */ } const p = A.game.player; p.inCombat = false; A.ui.settings.open(); });

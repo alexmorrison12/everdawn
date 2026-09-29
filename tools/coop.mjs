@@ -4,7 +4,7 @@
 import puppeteer from 'puppeteer-core';
 const url = process.argv[2]?.startsWith('http') ? process.argv[2] : 'http://localhost:5199/index.html';
 const shots = (process.argv.find(a => a.startsWith('--shots=')) || '').slice(8);
-const RAID = process.argv.includes('--raid');
+const RAID = process.argv.includes('--raid'), LOOT = process.argv.includes('--loot'); // --loot: raid loot rolls with a friend, a requeue, Ember Marks
 const launch = () => puppeteer.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: 'new', protocolTimeout: 900000, args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required'] });
 const [bh, bg] = await Promise.all([launch(), launch()]);
 const errs = [];
@@ -27,7 +27,7 @@ const code = await step('host opens a world', () => H.evaluate(async lv => {
   const A = __game; A.hostWanted = true; A.startWorld({ name: 'Hostia', cls: 'warrior', race: 'orc', sex: 'f', level: lv, created: Date.now() });
   for (let i = 0; i < 100 && !A.net?.code; i++) await new Promise(r => setTimeout(r, 200));
   return A.net?.code;
-}, RAID ? 10 : 4));
+}, RAID || LOOT ? 10 : 4));
 if (!code) { console.log('no room code', errs); process.exit(1); }
 await step('guest joins by code', () => Gp.evaluate(async (code, lv) => {
   const A = __game; let err = null, ok = false;
@@ -38,7 +38,7 @@ await step('guest joins by code', () => Gp.evaluate(async (code, lv) => {
   A.startWorld({ name: 'Guestor', cls: 'mage', race: 'elf', sex: 'm', level: lv, created: Date.now() });
   for (let i = 0; i < 100 && !A.guest.myId; i++) await new Promise(r => setTimeout(r, 200));
   return { mirror: A.game.mirror, myId: A.guest.myId, host: A.guest.hostName };
-}, code, RAID ? 10 : 4));
+}, code, RAID || LOOT ? 10 : 4));
 await wait(2500);
 await step('debug host session', () => H.evaluate(() => { const n = __game.net; return { guests: [...n.guests.values()].map(g => ({ id: g.id, name: g.name, proxy: g.proxy?.name, known: g.known.size })), conns: n.net.conns.size, errs: n.badge.note }; }));
 await step('debug proxy model on host', () => H.evaluate(() => { const pr = __game.net.proxies()[0]; const m = pr?.model; return m ? { parent: m.root.parent?.type, sceneIsWorld: m.root.parent === __game.world.scene, visible: m.root.visible, pos: m.root.position.toArray().map(Math.round), unitPos: pr.pos.toArray().map(Math.round), height: pr.height, meshes: (() => { let n = 0; m.root.traverse(o => { if (o.isMesh) n++; }); return n; })(), spec: JSON.stringify(m.spec).slice(0, 120) } : null; }));
@@ -277,6 +277,60 @@ if (process.argv.includes('--social')) {
     await wait(2500);
     return { guest: await Gp.evaluate(() => ({ mode: __game.mode, name: __game.game.player?.name, units: __game.guest?.units.size })), host: await H.evaluate(() => __game.net.proxies().map(p => p.name)) };
   });
+} else if (LOOT) {
+  await step('host enters the raid with the guest', async () => {
+    await H.evaluate(() => { __game.enterRaid(); });
+    await wait(5000);
+    return { guest: await Gp.evaluate(() => ({ mode: __game.mode, mirror: !!__game.raid?.mirror, raiders: __game.raid?.raiders.length })) };
+  });
+  await step('queue again: the friend is in the new raid on their own screen, frames and damage meter included', async () => {
+    await H.evaluate(() => { __game.raid.totalT = 900; }); await wait(800); // a long first raid (the next one's clock starts at 0)
+    await H.evaluate(() => __game.ui.emit('results:queue'));
+    await wait(9000);
+    await H.evaluate(() => { const pr = __game.net.proxies()[0]; pr.meter.dmg = 4321; });
+    await wait(1500);
+    const host = await H.evaluate(() => ({ mode: __game.mode, raiders: __game.raid.raiders.length, friendIn: __game.raid.raiders.includes(__game.net.proxies()[0]) }));
+    const guest = await Gp.evaluate(() => ({ mode: __game.mode, mirror: !!__game.raid?.mirror, raiders: __game.raid?.raiders.length, meInRoster: !!__game.raid?.raiders.includes(__game.game.player), myDmg: Math.round(__game.game.player.meter?.dmg || 0) }));
+    if (guest.raiders !== host.raiders || guest.myDmg !== 4321) throw new Error(`guest raid view out of date: ${JSON.stringify({ host, guest })}`);
+    return { host, guest };
+  });
+  const loot = await step('the dragon dies: both get Need / Greed / Pass windows; nothing rolls until both chose', async () => {
+    const marks0 = await Gp.evaluate(() => __game.game.player.marks || 0);
+    await H.evaluate(() => { const A = __game, r = A.raid; r.state = 'combat'; r.fightStart = r.totalT - 90; r.combat.kill(r.boss, A.game.player); });
+    await Gp.waitForFunction(() => document.querySelectorAll('.evd-roll').length > 0, { timeout: 20000 });
+    await H.waitForFunction(() => document.querySelectorAll('.evd-roll').length > 0, { timeout: 20000 });
+    await wait(500);
+    const items = await Gp.evaluate(() => [...document.querySelectorAll('.evd-roll .rn')].map(e => e.textContent));
+    const bags0 = await Gp.evaluate(() => __game.game.player.bags.filter(b => b.gear).length + Object.values(__game.game.player.equip).filter(Boolean).length);
+    // the friend picks Need where they can, Greed otherwise; nothing has rolled yet (the host hasn't chosen)
+    await Gp.evaluate(() => { for (const r of document.querySelectorAll('.evd-roll')) { const need = r.querySelector('.rbtn.need'); (need.disabled ? r.querySelector('.rbtn.greed') : need).click(); } });
+    await wait(1200);
+    const early = await H.evaluate(() => [...document.querySelectorAll('.evd-chat .ln')].map(l => l.textContent).filter(t => /won:/.test(t)).length);
+    await H.evaluate(() => { for (const r of document.querySelectorAll('.evd-roll')) r.querySelector('.rbtn.pass').click(); });
+    await wait(2500);
+    const chat = p => p.evaluate(() => [...document.querySelectorAll('.evd-chat .ln')].map(l => l.textContent).filter(t => /selected|won:|passed on|receive loot/.test(t)));
+    const hc = await chat(H), gc = await chat(Gp);
+    const guestWins = hc.filter(t => /Guestor won:/.test(t)).length;
+    const bags1 = await Gp.evaluate(() => __game.game.player.bags.filter(b => b.gear).length + Object.values(__game.game.player.equip).filter(Boolean).length);
+    await wait(3000);
+    const marks1 = await Gp.evaluate(() => __game.game.player.marks || 0);
+    const res = {
+      items: items.length, rolledBeforeHostChose: early,
+      host: { youPassed: hc.filter(t => /^You passed on/.test(t)).length, friendNamed: hc.filter(t => /^Guestor (selected|won)/.test(t)).length, youWon: hc.filter(t => /^You won/.test(t)).length },
+      guest: { youSelected: gc.filter(t => /^You selected/.test(t)).length, hostNamed: gc.filter(t => /^Hostia passed on/.test(t)).length, youWon: gc.filter(t => /^You won/.test(t)).length, received: gc.filter(t => /^You receive loot/.test(t)).length, wrongYou: gc.filter(t => /^You passed on/.test(t)).length },
+      guestWins, gotItems: bags1 - bags0, marks: marks1 - marks0, results: await Gp.evaluate(() => [...document.querySelectorAll('.evd-roll .rw')].map(e => e.textContent)),
+    };
+    if (early) throw new Error('an item rolled before the host chose');
+    if (res.guest.youSelected !== items.length || res.guest.wrongYou || res.host.youPassed !== items.length) throw new Error('chat names wrong: ' + JSON.stringify(res));
+    if (res.guest.youWon !== guestWins || res.gotItems !== guestWins || res.guest.received !== guestWins) throw new Error('won items missing: ' + JSON.stringify(res));
+    if (res.marks !== 5) throw new Error('no Ember Marks for the friend: ' + JSON.stringify(res));
+    // the friend's victory screen lists what they won
+    await Gp.waitForFunction(n => document.querySelectorAll('.rloot .rli').length === n && document.querySelector('.rloot')?.offsetParent, { timeout: 20000 }, guestWins).catch(() => {});
+    res.resultsLoot = await Gp.evaluate(() => [...document.querySelectorAll('.rloot .rli, .rloot .rnone')].map(e => e.textContent));
+    if (res.resultsLoot.length !== Math.max(1, guestWins) || (guestWins && /rolled better|Rolling/.test(res.resultsLoot[0]))) throw new Error('results screen loot wrong: ' + JSON.stringify(res.resultsLoot));
+    return res;
+  });
+  await shot(Gp, 'guest_loot'); await shot(H, 'host_loot');
 } else if (!RAID) {
   // bring a wolf to both players and let the guest kill it with fireballs
   // out past the village guards, so the kill is ours

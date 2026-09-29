@@ -67,6 +67,8 @@ export const RECIPES = [
   { id: 'emberTonic', prof: 'alchemy', req: 90, makes: 'potionEmber', needs: { embergrass: 1, briarthorn: 2 } },
   { id: 'copperCirclet', prof: 'blacksmithing', req: 1, gear: { slot: 'head', ilvl: 5, rarity: 'uncommon', name: 'Rough Copper Circlet' }, needs: { copperOre: 6 }, anvil: true },
   { id: 'copperBoots', prof: 'blacksmithing', req: 20, gear: { slot: 'feet', ilvl: 7, rarity: 'uncommon', name: 'Copper-Toed Boots' }, needs: { copperOre: 8 }, anvil: true },
+  { id: 'copperBracers', prof: 'blacksmithing', req: 10, gear: { slot: 'wrist', ilvl: 6, rarity: 'uncommon', name: 'Copper Bracers' }, needs: { copperOre: 5 }, anvil: true },
+  { id: 'copperBelt', prof: 'blacksmithing', req: 35, gear: { slot: 'waist', ilvl: 8, rarity: 'uncommon', name: 'Runed Copper Belt' }, needs: { copperOre: 8, tinOre: 1 }, anvil: true },
   { id: 'tinGloves', prof: 'blacksmithing', req: 50, gear: { slot: 'hands', ilvl: 9, rarity: 'uncommon', name: 'Tin-Knuckled Gloves' }, needs: { tinOre: 8, copperOre: 2 }, anvil: true },
   { id: 'tinMantle', prof: 'blacksmithing', req: 70, gear: { slot: 'shoulders', ilvl: 10, rarity: 'uncommon', name: 'Tin-Plated Mantle' }, needs: { tinOre: 10 }, anvil: true },
   { id: 'emberLegs', prof: 'blacksmithing', req: 100, gear: { slot: 'legs', ilvl: 13, rarity: 'rare', name: 'Emberite-Laced Leggings' }, needs: { emberite: 6, tinOre: 4 }, anvil: true },
@@ -265,6 +267,7 @@ export class Professions {
       if (rec.gear) {
         const it = makeGear(new RNG(`${rec.id}-${p.cls}-${Date.now()}`), p.cls, rec.gear.ilvl, rec.gear.rarity, rec.gear.slot);
         it.name = name; it.crafted = p.name;
+        if (it.slot === 'weapon') { it.twoHand = p.cls === 'warrior' || p.cls === 'mage'; it.icon = p.cls === 'warrior' ? 'sword2h' : p.cls === 'mage' ? 'staff' : 'mace'; } // a Warblade, a Spire, a Scepter
         g.addGear(it); bus.emit('loot_item', { item: it });
       } else { g.addItem(rec.makes, 1); bus.emit('loot_item', { id: rec.makes, count: 1 }); }
       bus.emit('sound', { name: rec.prof === 'blacksmithing' ? 'clink' : 'itemPickup' });
@@ -328,7 +331,7 @@ export class Professions {
       id, name: d.name, icon: d.icon, kind: d.kind, tip: d.tip, skill: s[id] || 1, max: MAX_SKILL,
       tool: id === 'fishing' ? this.tool('fishing')?.name || null : id === 'mining' ? this.tool('mining')?.name || null : undefined,
       recipes: RECIPES.filter(r => r.prof === id).map(r => ({
-        id: r.id, name: r.gear ? gearName(r, this.me.cls) : ITEMS[r.makes].name, icon: r.gear ? { head: 'helm', feet: 'boots', hands: 'gloves', shoulders: 'shoulders', legs: 'legs', weapon: this.me.cls === 'warrior' ? 'sword2h' : this.me.cls === 'mage' ? 'staff' : 'mace' }[r.gear.slot] : ITEMS[r.makes].icon,
+        id: r.id, name: r.gear ? gearName(r, this.me.cls) : ITEMS[r.makes].name, icon: r.gear ? { head: 'helm', feet: 'boots', hands: 'gloves', shoulders: 'shoulders', legs: 'legs', wrist: 'bracers', waist: 'belt', weapon: this.me.cls === 'warrior' ? 'sword2h' : this.me.cls === 'mage' ? 'staff' : 'mace' }[r.gear.slot] : ITEMS[r.makes].icon,
         rarity: r.gear ? r.gear.rarity : ITEMS[r.makes].rarity, req: r.req, color: this.color(id, r.req), max: this.maxCraft(r), why: this.canCraft(r),
         needs: Object.entries(r.needs).map(([nid, n]) => ({ id: nid, name: ITEMS[nid].name, icon: ITEMS[nid].icon, need: n, have: g.countItem(nid) })),
         where: r.fire ? 'Needs a fire' : r.anvil ? 'Needs an anvil' : '',

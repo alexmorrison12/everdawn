@@ -204,6 +204,19 @@ export const SPELLS = {
   mobCandle: { name: 'Candle Flare', school: 'fire', range: 0, cd: 12, target: 'none', anim: 'attack', fx: { self: 'fireImpact' }, effect: c => { for (const e of c.enemiesNear(c.caster.pos, 7)) c.damage(e, 6 + c.L * 2.4, 'fire', { aoe: true }); } },
   mobFlurry: { name: 'Blade Flurry', school: 'physical', range: 0, cd: 14, target: 'none', anim: 'attack2h', fx: { attach: 'whirlwind', attachDur: 1 }, effect: c => { for (const e of c.enemiesNear(c.caster.pos, 6)) c.damage(e, c.weapon(1.2) + 4, 'physical', { aoe: true, ability: true }); } },
   // professions (game/professions.js): usable from the Professions window or the action bar
+  // ------------------------------------------------ ranged weapons: anyone with one equipped (game/items.js)
+  shoot: {
+    name: 'Shoot', icon: 'wand', learn: 1, school: 'arcane', ranged: 'wand', cost: 0, range: 30, cd: 1.6, weaponCd: true, target: 'enemy', anim: 'castDirected',
+    fx: { projectile: 'arcaneMissile', impact: 'arcaneImpact' }, speed: 38, sound: 'arcaneMissile',
+    effect: c => c.damage(c.target, c.ranged(), c.caster.equip?.ranged?.school || 'arcane'),
+    desc: () => 'Shoots at the enemy with your wand, costing no mana.',
+  },
+  shootBow: {
+    name: 'Shoot Bow', icon: 'bow', learn: 1, school: 'physical', ranged: 'bow', cost: 0, range: 30, minRange: 5, cd: 2.8, weaponCd: true, target: 'enemy', anim: 'shoot',
+    fx: { projectile: 'arrow' }, speed: 48, sound: 'bowShot',
+    effect: c => c.damage(c.target, c.ranged() + c.ap / 14 * 2, 'physical', { ability: true }),
+    desc: () => 'Shoots at the enemy with your bow or crossbow. Good for pulling one enemy at a time.',
+  },
   fishing: { name: 'Fishing', icon: 'fishingPole', prof: 'fishing', target: 'none', range: 0, cost: 0, offGcd: true, desc: () => 'Cast a line into the water in front of you. When the bobber splashes, right-click it or press Fishing again. Needs a Fishing Pole.' },
   campfire: { name: 'Basic Campfire', icon: 'campfire', prof: 'cooking', target: 'none', range: 0, cost: 0, offGcd: true, desc: () => 'Builds a campfire you can cook at for 90 seconds.' },
 };

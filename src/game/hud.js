@@ -6,7 +6,7 @@ import { bus } from './events.js';
 import { SPELLS } from './data/spells.js';
 import { CLASSES, RACES, xpToNext, MAX_LEVEL } from './data/classes.js';
 import { QUEST, NPCS } from './data/quests.js';
-import { ITEMS, statLines, SLOTS, procText } from './items.js';
+import { ITEMS, statLines, SLOTS, procText, isTwoHand, makeCosmetic } from './items.js';
 import { MOBS } from './data/mobs.js';
 import { drawMinimap, drawLairMinimap, areaAt, bakeWorldMap } from './map.js';
 import { Portraits } from './portrait.js';
@@ -21,13 +21,22 @@ const _v = new THREE.Vector3();
 const CH_MAP = { whisper: 'whisperIn', whisper_out: 'whisperOut', localdefense: 'general', raid: 'raid', rw: 'raidWarning' };
 const ROLE = { mt: 'tank', ot: 'tank', heal: 'healer', melee: 'dps', ranged: 'dps' };
 const STAT_NAMES = { str: 'Strength', agi: 'Agility', sta: 'Stamina', int: 'Intellect', spi: 'Spirit' };
-const SLOT_UI = { head: 'head', shoulders: 'shoulder', chest: 'chest', hands: 'hands', legs: 'legs', feet: 'feet', back: 'back', weapon: 'mainhand' };
-const SLOT_NAME = { head: 'Head', shoulders: 'Shoulder', chest: 'Chest', hands: 'Hands', legs: 'Legs', feet: 'Feet', back: 'Back', weapon: 'Two-Hand' };
+const SLOT_UI = { shoulders: 'shoulder', weapon: 'mainhand' }; // the paper doll's slot ids (others match)
+const uiSlot = s => SLOT_UI[s] || s, gameSlot = id => id === 'shoulder' ? 'shoulders' : id === 'mainhand' ? 'weapon' : id;
+const SLOT_NAME = { head: 'Head', neck: 'Neck', shoulders: 'Shoulder', back: 'Back', chest: 'Chest', shirt: 'Shirt', tabard: 'Tabard', wrist: 'Wrist', hands: 'Hands', waist: 'Waist', legs: 'Legs', feet: 'Feet', finger: 'Finger', trinket: 'Trinket', offhand: 'Held In Off-hand', ranged: 'Ranged' };
+const WEAPON_TYPE = { sword2h: 'Sword', sword: 'Sword', staff: 'Staff', dagger: 'Dagger', mace: 'Mace' };
+function gearType(it) { // the right-hand word on a tooltip's slot line
+  if (it.slot === 'weapon') return /axe/i.test(it.name) && it.cls === 'warrior' ? 'Axe' : WEAPON_TYPE[it.icon] || (it.cls === 'warrior' ? 'Sword' : it.cls === 'mage' ? 'Staff' : 'Mace');
+  if (it.slot === 'ranged') return it.icon === 'wand' ? 'Wand' : /Crossbow/.test(it.name) ? 'Crossbow' : 'Bow';
+  if (it.slot === 'back') return 'Cloth';
+  if (['head', 'shoulders', 'chest', 'wrist', 'hands', 'waist', 'legs', 'feet'].includes(it.slot)) return it.armorType === 'plate' ? 'Plate' : 'Cloth';
+  return '';
+}
 
 /** Game item (template or generated gear) → UI Item shape (cached). */
 export function uiItem(it, id) {
   if (!it) return null;
-  if (it._ui) return it._ui;
+  if (it._ui && (!it.gear || UIGEAR.get(it._ui) === it)) return it._ui; // (a copy, or a save from before, brings its original's: make its own)
   const o = { id: id || it.uid, name: it.name, icon: it.icon || 'unknown', rarity: it.rarity || 'common', flavor: it.flavor, sell: it.sell ? it.sell * 25 : undefined };
   if (it.quest) { o.questItem = true; o.bind = 'pickup'; }
   if (it.gear) {
@@ -35,17 +44,18 @@ export function uiItem(it, id) {
     o.bind = it.rarity === 'epic' || it.rarity === 'legendary' ? 'pickup' : 'equip';
     if (it.unique) o.unique = true;
     if (it.proc && it.proc.id !== 'dawnlight') o.chance = [procText(it.proc)];
-    o.slot = SLOT_NAME[it.slot]; o.type = it.slot === 'weapon' ? (it.cls === 'warrior' ? 'Sword' : it.cls === 'mage' ? 'Staff' : 'Mace') : it.slot === 'back' ? 'Cloth' : it.armorType === 'plate' ? 'Plate' : 'Cloth';
+    o.slot = it.slot === 'weapon' ? (isTwoHand(it) ? 'Two-Hand' : 'One-Hand') : SLOT_NAME[it.slot]; o.type = gearType(it);
     if (it.armor) o.armor = it.armor;
     if (it.dmgMin) { o.damage = { min: it.dmgMin * 10, max: it.dmgMax * 10, speed: it.speed }; o.dps = +(((it.dmgMin + it.dmgMax) / 2 * 10) / it.speed).toFixed(1); }
     o.stats = {}; for (const k in STAT_NAMES) if (it.stats?.[k]) o.stats[STAT_NAMES[k]] = it.stats[k];
     o.equip = statLines(it).filter(l => l.text.startsWith('Equip:')).map(l => l.text.replace(/^Equip: /, ''));
-    o.itemLevel = it.ilvl; o.reqLevel = Math.max(1, Math.min(MAX_LEVEL, it.ilvl - 3)); o.classes = [CLASSES[it.cls]?.name]; // raid gear asks for the level cap, not above it
+    if (it.cosmetic) { o.bind = undefined; o.sell = it.sell * 25; } // shirts and tabards: for looks, anyone can wear them
+    else { o.itemLevel = it.ilvl; o.reqLevel = Math.max(1, Math.min(MAX_LEVEL, it.ilvl - 3)); o.classes = [CLASSES[it.cls]?.name]; } // raid gear asks for the level cap, not above it
     o.tint = it.tier >= 3 ? undefined : undefined;
   }
   if (it.mount) { o.bind = 'pickup'; o.use = ['Summons and dismisses a rideable drake.']; o.flavor = 'The Maw remembers. So does this drake.'; }
   if (it.use && !it.gear) o.use = [{ healPotion: 'Restores health. (1 Min Cooldown)', manaPotion: 'Restores mana. (1 Min Cooldown)', eat: 'Restores health over 18 sec. Must remain seated.', drink: 'Restores mana over 18 sec. Must remain seated.', hearth: 'Returns you to Dawnhollow. Speak to an Innkeeper to change your home location.' }[it.use]];
-  it._ui = o;
+  Object.defineProperty(it, '_ui', { value: o, enumerable: false, configurable: true, writable: true }); // a cache: never saved, sent or copied
   return o;
 }
 
@@ -57,7 +67,7 @@ function spellTip(sp, u) {
     cost: cost ? `${cost} ${sp.powerType === 'rage' ? 'Rage' : sp.powerType === 'energy' ? 'Energy' : 'Mana'}` : undefined,
     range: sp.range ? `${sp.range} yd range` : sp.melee ? 'Melee Range' : undefined,
     castTime: sp.channel ? `Channeled (${sp.channel} sec)` : sp.cast ? `${sp.cast} sec cast` : 'Instant',
-    cooldown: sp.cd ? `${sp.cd} sec cooldown` : undefined,
+    cooldown: sp.weaponCd ? (u.equip?.ranged ? `${u.equip.ranged.speed} sec cooldown` : 'Requires a ranged weapon') : sp.cd ? `${sp.cd} sec cooldown` : undefined,
     desc: typeof sp.desc === 'function' ? sp.desc({ ...c, L: u.level }) : sp.desc || '',
     reqLevel: sp.learn,
   };
@@ -98,6 +108,8 @@ export class HUD {
       if (ui.merchant.isOpen) { this.game.sellItem(i); return; } // at a merchant, right-click sells (WoW)
       if (b.gear) this.game.equip(b.gear); else this.game.useItem(b.id); this.bagsDirty = this.charDirty = true;
     });
+    ui.on('unequip', id => { if (this.game.unequip(gameSlot(id))) this.bagsDirty = this.charDirty = true; }); // click an equipped piece: into the bags
+    ui.on('equipTo', (i, id) => { const b = this.game.player.bags[i]; if (!b) return; if (b.gear) this.game.equip(b.gear, gameSlot(id)); else this.game.useItem(b.id); this.bagsDirty = this.charDirty = true; });
     ui.on('spellbookCast', id => this.g.pc?.castSpell(id));
     ui.on('profUse', id => this.g.pc?.castSpell(id));
     ui.on('craft', (id, n) => { this.e.prof?.craft(id, n); this.profDirty = true; });
@@ -141,8 +153,8 @@ export class HUD {
     // item tooltips: what wearing this would do to your estimated DPS (and HPS for healers)
     ui.itemExtra = uiIt => {
       const g = UIGEAR.get(uiIt), p = this.game.player;
-      if (!g || !p || g.cls !== p.cls || p.equip[g.slot] === g) return null;
-      const cur = estimate(this.game, p), next = estimate(this.game, p, { [g.slot]: g });
+      if (!g || !p || g.cosmetic || g.cls !== p.cls || Object.values(p.equip).includes(g)) return null;
+      const cur = estimate(this.game, p), next = estimate(this.game, p, this.game.swapFor(g));
       const line = (label, a, b) => { const d = b - a; return { text: `If equipped: ${label} ${d >= 0 ? '+' : ''}${d.toFixed(1)}  (${a.toFixed(1)} → ${b.toFixed(1)})`, color: d > 0.05 ? '#1eff00' : d < -0.05 ? '#ff4040' : '#ffd100' }; };
       return cur.hps != null ? [line('HPS', cur.hps, next.hps), line('DPS', cur.dps, next.dps)] : [line('DPS', cur.dps, next.dps)];
     };
@@ -201,6 +213,7 @@ export class HUD {
     on('ghost', ({ on: ghost }) => { ui.death.hide(); if (ghost) { ui.alerts.info('Return to your corpse to resurrect.'); } });
     on('target_changed', ({ target }) => { this.portraitDirty = true; if (target && target.kind === 'mob' && !target.dead) this.game.onFirstCombat?.(); });
     on('raid_loot', ({ items, raid }) => this.raidLoot(items, raid));
+    on('roll_result', ({ i, res }) => this.rollResult(i, res));
     on('bubble', () => {});
     on('duel_state', d => this.duelState(d));
     on('party_changed', () => { this.socialT = 0; });
@@ -222,6 +235,7 @@ export class HUD {
     if (ev.ch === 'yell' && ev.unit && (ev.unit.kind === 'mob' || ev.unit.kind === 'boss' || !ev.unit.kind)) ch = 'npcYell';
     if (ev.ch === 'emote' && ev.unit && ev.unit.boss) ch = 'bossEmote';
     let text = ev.text, items = [];
+    if (ev.self && p && ev.self === p.name && text.startsWith(ev.self)) text = 'You' + text.slice(ev.self.length); // loot lines: your own name reads "You"
     if (ev.links?.length) {
       ev.links.forEach((l, i) => {
         const it = l.item ? uiItem(l.item) : uiItem(ITEMS[l.id], l.id) || { name: l.name, rarity: l.rarity, icon: 'unknown' };
@@ -302,20 +316,22 @@ export class HUD {
     bus.emit('sound', { name: 'loot' });
   }
 
-  raidLoot(items, raid) {
-    const ui = this.ui;
-    this.rollItems = new Map();
+  /** Need / Greed / Pass windows. `choose(i, choice)` sends the pick (to the raid here, or to the host from a friend's game). */
+  raidLoot(items, raid, choose = (i, c) => raid.chooseRoll(i, this.game.player, c), dur = 30) {
+    const ui = this.ui, stamp = Date.now();
+    this.rollItems = new Map(); this.rollIds = [];
     items.forEach((it, i) => {
-      const id = 'r' + i + '_' + Date.now();
-      this.rollItems.set(id, { it, raid });
-      ui.rolls.add({ id, item: uiItem(it), duration: 30, canNeed: it.mount || it.cls === this.game.player.cls, onRoll: c => this.onRoll(id, c) });
+      const id = 'r' + i + '_' + stamp;
+      this.rollItems.set(id, { it, i, choose }); this.rollIds[i] = id;
+      ui.rolls.add({ id, item: uiItem(it), duration: dur, canNeed: !!it.mount || it.cls === this.game.player.cls, onRoll: c => this.onRoll(id, c) });
     });
   }
   onRoll(id, choice) {
     const r = this.rollItems?.get(id); if (!r || r.done) return; r.done = true;
-    const win = r.raid.resolveRoll(r.it, choice);
-    if (win) this.ui.rolls.result(id, { rolls: [], winner: win.m.name });
+    r.choose(r.i, choice);
   }
+  /** Everyone has chosen (or time ran out): show who rolled what and who won. */
+  rollResult(i, res) { const id = this.rollIds?.[i]; if (id) this.ui.rolls.result(id, res); }
 
   // ------------------------------------------------------------------ per frame
   update(dt) {
@@ -355,7 +371,7 @@ export class HUD {
       const chk = learned ? g.combat.canCast(p, id, sp.target === 'ally' ? (t && !p.isEnemy(t) ? t : p) : t) : { ok: false };
       return {
         icon: sp.icon, name: sp.name, spell: spellTip(sp, p), keybind: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '='][i],
-        cd: cd > 0 ? { remaining: cd, duration: sp.cd || cd } : null,
+        cd: cd > 0 ? { remaining: cd, duration: (sp.weaponCd && p.equip?.ranged?.speed) || sp.cd || cd } : null,
         gcd: !sp.offGcd && p.gcd > 0 ? { remaining: p.gcd, duration: p.gcdMax || 1.5 } : null,
         usable: learned && !(sp.requiresAura && !p.hasAura(sp.requiresAura)) && !(sp.requiresTargetBelow && (!t || t.hpPct > sp.requiresTargetBelow)),
         noResource: chk.err === 'Not enough mana' || chk.err === 'Not enough rage' || chk.err === 'Not enough energy',
@@ -436,7 +452,8 @@ export class HUD {
   }
   pushCharacter() {
     const p = this.game.player, s = p.stats, slots = {};
-    for (const k of SLOTS) if (p.equip[k]) slots[SLOT_UI[k]] = uiItem(p.equip[k]);
+    for (const k of SLOTS) if (p.equip[k]) slots[uiSlot(k)] = uiItem(p.equip[k]);
+    const twoHand = isTwoHand(p.equip.weapon) ? slots.mainhand : null; // a two-hander shows (faded) in the off-hand too, like WoW
     // attributes: class base + growth per level + race bonus (display only; derived stats come from Unit.recalc) + gear
     const B = { warrior: [23, 20, 22, 17, 19, 2.2, 1.2, 2, 0.4, 0.6], mage: [17, 17, 18, 24, 22, 0.4, 0.5, 1, 2.2, 1.6], priest: [17, 18, 19, 22, 24, 0.4, 0.5, 1.2, 1.8, 2.2] }[p.cls] || [20, 20, 20, 20, 20, 1, 1, 1, 1, 1];
     const RB = { human: [0, 0, 0, 0, 2], dwarf: [2, -2, 2, -1, 0], orc: [3, -2, 1, -3, 2], elf: [-2, 3, -1, 2, 1] }[p.race] || [0, 0, 0, 0, 0];
@@ -444,7 +461,7 @@ export class HUD {
     ['str', 'agi', 'sta', 'int', 'spi'].forEach((k, i) => { gs[k] = Math.round(B[i] + B[i + 5] * (p.level - 1) + RB[i] + (gs0[k] || 0)); });
     this.ui.character.set({
       name: p.name, level: p.level, race: p.race, cls: p.cls, guild: p.guild,
-      slots,
+      slots, twoHand,
       statGroups: [
         { title: 'Attributes', stats: [{ label: 'Strength', value: gs.str || 0 }, { label: 'Agility', value: gs.agi || 0 }, { label: 'Stamina', value: gs.sta || 0 }, { label: 'Intellect', value: gs.int || 0 }, { label: 'Spirit', value: gs.spi || 0 }, { label: 'Armor', value: Math.round(s.armor) }] },
         (() => { const est = estimate(this.game, p), tip = 'A 90-second fight against a training dummy with your gear and abilities. Hover an item to see what it would change.'; return { title: 'Training Dummy', stats: [{ label: 'DPS', value: est.dps.toFixed(1), color: '#ffd35a', tip }, ...(est.hps != null ? [{ label: 'HPS', value: est.hps.toFixed(1), color: '#40ff90', tip }] : [])] }; })(),
@@ -560,7 +577,7 @@ export class HUD {
   }
   pushSpellbook() {
     const p = this.game.player, bar = this.g.pc?.bar || [];
-    this.ui.spellbook.set({ cls: p.cls, level: p.level, spells: (CLASSES[p.cls].bar || []).map(id => { const sp = SPELLS[id], learn = sp.learn || 1; return { id, name: sp.name, icon: sp.icon, learn, known: learn <= p.level, onBar: bar.includes(id), tip: spellTip(sp, p) }; }) });
+    this.ui.spellbook.set({ cls: p.cls, level: p.level, spells: [...(CLASSES[p.cls].bar || []), p.cls === 'warrior' ? 'shootBow' : 'shoot'].map(id => { const sp = SPELLS[id], learn = sp.learn || 1; return { id, name: sp.name, icon: sp.icon, learn, known: learn <= p.level, onBar: bar.includes(id), tip: spellTip(sp, p) }; }) });
   }
   pushQuestLog() {
     const p = this.game.player, g = this.game, sub = t => String(t || '').replace(/\$N/g, p.name).replace(/\$C/g, CLASSES[p.cls]?.name || '').replace(/\$R/g, RACES[p.race]?.name || '');
@@ -607,6 +624,7 @@ export class HUD {
   merchantBuy(i, n) {
     const e = this.vendorStock?.[i]; if (!e) return;
     if (e.marks != null) this.game.buyMarks(e, e.gear ? 1 : n);
+    else if (e.always) this.game.buyGear(makeCosmetic(e.gear.cosmetic), e.price); // the tailor never runs out
     else if (e.gear) { if (this.game.buyGear(e.gear, e.price)) this.vendorStock.splice(i, 1); } // one of each piece
     else this.game.buy(e.id, n, e.price * n);
     this.merchantDirty = true;
